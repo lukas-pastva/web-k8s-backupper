@@ -67,6 +67,12 @@ def namespace_page():
         return f.read()
 
 
+@app.get("/pvc", response_class=HTMLResponse)
+def pvc_page():
+    with open(os.path.join(static_dir, "pvc.html"), "r", encoding="utf-8") as f:
+        return f.read()
+
+
 @app.get("/api/namespaces")
 def list_namespaces() -> List[str]:
     nss = core.list_namespace().items
@@ -292,6 +298,38 @@ def stream_tar_from_pod(ns: str, pod_name: str) -> Iterator[bytes]:
         resp.close()
 
 
+def _exec_in_pod(ns: str, pod_name: str, command: list[str]) -> tuple[str, str]:
+    resp = k8s_stream(
+        core.connect_get_namespaced_pod_exec,
+        pod_name,
+        ns,
+        command=command,
+        stderr=True,
+        stdin=False,
+        stdout=True,
+        tty=False,
+        _preload_content=False,
+    )
+    out_chunks: list[str] = []
+    err_chunks: list[str] = []
+    try:
+        while resp.is_open():
+            resp.update(timeout=5)
+            if resp.peek_stdout():
+                chunk = resp.read_stdout()
+                if isinstance(chunk, bytes):
+                    chunk = chunk.decode(errors="replace")
+                out_chunks.append(chunk)
+            if resp.peek_stderr():
+                chunk = resp.read_stderr()
+                if isinstance(chunk, bytes):
+                    chunk = chunk.decode(errors="replace")
+                err_chunks.append(chunk)
+    finally:
+        resp.close()
+    return ("".join(out_chunks), "".join(err_chunks))
+
+
 class _IteratorReader:
     """Wrap an iterator of bytes into a file-like object with .read()."""
 
@@ -463,6 +501,172 @@ def _tar_to_zip_stream(tar_stream: Iterator[bytes]) -> Iterator[bytes]:
     # Yield data as produced
     for chunk in writer.reader():
         yield chunk
+
+
+def _sanitize_rel_path(p: str) -> str:
+    p = p or "."
+    p = p.strip()
+    if p.startswith("/"):
+        p = p[1:]
+    # Normalize and prevent escape upwards
+    p = os.path.normpath(p)
+    if p in ("", "."):
+        return "."
+    if p.startswith(".."):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    return p
+
+
+def _build_tree_from_tar(ns: str, pod_name: str, rel_path: str = ".", max_nodes: int = 5000):
+    rel_path = _sanitize_rel_path(rel_path)
+    logger.info("Building PVC tree: ns=%s pod=%s rel_path=%s max_nodes=%d", ns, pod_name, rel_path, max_nodes)
+    if ARCHIVE_DEBUG:
+        # Quick peek at top-level to diagnose mount/permissions
+        try:
+            out, err = _exec_in_pod(ns, pod_name, ["/bin/sh", "-lc", "ls -la /data | sed -n '1,50p'"])
+            logger.debug("PVC /data ls -la (first 50 lines)\n%s", out)
+            if err:
+                logger.debug("PVC /data ls stderr: %s", err.strip())
+        except Exception:
+            logger.exception("Failed to ls -la /data for debug")
+    # Start tar limited to rel_path
+    cmd_path = rel_path
+    resp = k8s_stream(
+        core.connect_get_namespaced_pod_exec,
+        pod_name,
+        ns,
+        command=["tar", "cf", "-", "-C", "/data", cmd_path],
+        stderr=True,
+        stdin=False,
+        stdout=True,
+        tty=False,
+        _preload_content=False,
+    )
+
+    bytes_read = 0
+    truncated = False
+    total_entries = 0
+
+    def tar_iter() -> Iterator[bytes]:
+        nonlocal bytes_read
+        try:
+            while resp.is_open():
+                resp.update(timeout=5)
+                if resp.peek_stdout():
+                    chunk = resp.read_stdout()
+                    if isinstance(chunk, str):
+                        chunk = chunk.encode()
+                    if chunk:
+                        bytes_read += len(chunk)
+                        yield chunk
+                if resp.peek_stderr():
+                    err = resp.read_stderr()
+                    if err:
+                        estr = err if isinstance(err, str) else err.decode(errors="replace")
+                        logger.debug("PVC tar(tree) stderr: %s", estr.strip())
+        finally:
+            resp.close()
+
+    reader = _IteratorReader(tar_iter())
+    root = {"name": "/", "type": "dir", "children": {}}
+
+    def ensure_dir(parent: dict, name: str) -> dict:
+        ch = parent["children"]
+        if name not in ch:
+            ch[name] = {"name": name, "type": "dir", "children": {}}
+        elif ch[name]["type"] != "dir":
+            # Promote to dir if previously marked as file due to tar ordering
+            ch[name]["type"] = "dir"
+            ch[name]["children"] = ch.get("children", {})
+        return ch[name]
+
+    def add_file(parent: dict, name: str, size: int | None, mode: int | None):
+        ch = parent["children"]
+        if name not in ch:
+            ch[name] = {"name": name, "type": "file", "size": int(size or 0), "mode": int(mode or 0)}
+        else:
+            # If already present as dir, keep dir; otherwise set file meta
+            if ch[name]["type"] != "dir":
+                ch[name].update({"type": "file", "size": int(size or 0), "mode": int(mode or 0)})
+
+    try:
+        with tarfile.open(fileobj=reader, mode="r|") as tf:
+            for ti in tf:
+                total_entries += 1
+                rel = ti.name.lstrip("./")
+                if not rel:
+                    continue
+                parts = rel.split("/")
+                node = root
+                # If there are nested parts, mark directories accordingly
+                for i, part in enumerate(parts):
+                    is_last = (i == len(parts) - 1)
+                    if is_last:
+                        if ti.isdir():
+                            ensure_dir(node, part)
+                        elif ti.isreg():
+                            add_file(node, part, ti.size, ti.mode)
+                        elif ti.issym() or ti.islnk():
+                            ch = node["children"]
+                            ch[part] = {"name": part, "type": "link", "target": ti.linkname or ""}
+                        else:
+                            ch = node["children"]
+                            ch[part] = {"name": part, "type": "other"}
+                    else:
+                        node = ensure_dir(node, part)
+
+                # Stop if too many nodes accumulated (approximate: count children entries)
+                def count_nodes(n: dict) -> int:
+                    c = 0
+                    for v in n["children"].values():
+                        c += 1
+                        if v.get("type") == "dir":
+                            c += count_nodes(v)
+                    return c
+
+                if total_entries % 500 == 0:
+                    # Periodic check to avoid O(n) on every item
+                    if count_nodes(root) > max_nodes:
+                        truncated = True
+                        break
+    except Exception:
+        logger.exception("Failed to build PVC tree")
+        raise
+    finally:
+        try:
+            core.delete_namespaced_pod(name=pod_name, namespace=ns, grace_period_seconds=0)
+        except Exception:
+            pass
+        logger.info("PVC tree built: entries=%d bytes=%d truncated=%s", total_entries, bytes_read, truncated)
+
+    # Convert children dicts to sorted arrays for JSON friendliness
+    def to_list(n: dict):
+        items = list(n["children"].values())
+        # Sort: dirs first, then files, then links/others, by name
+        order = {"dir": 0, "file": 1, "link": 2}
+        items.sort(key=lambda x: (order.get(x.get("type"), 9), x.get("name", "")))
+        out = []
+        for it in items:
+            if it.get("type") == "dir":
+                out.append({"name": it["name"], "type": "dir", "children": to_list(it)})
+            else:
+                cleaned = {k: v for k, v in it.items() if k != "children"}
+                out.append(cleaned)
+        return out
+
+    tree = {"name": "/", "type": "dir", "children": to_list(root)}
+    return {"root": tree, "truncated": truncated}
+
+
+@app.get("/api/namespaces/{ns}/pvcs/{pvc}/tree")
+def pvc_tree(ns: str, pvc: str, path: str = ".", maxNodes: int = 5000):
+    pod_name = ensure_helper_pod(ns, pvc)
+    try:
+        rel = _sanitize_rel_path(path)
+        result = _build_tree_from_tar(ns, pod_name, rel_path=rel, max_nodes=maxNodes)
+        return result
+    except Exception as e:
+        raise
 
 
 @app.get("/api/namespaces/{ns}/pvcs/{pvc}/download")

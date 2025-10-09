@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PVC Browser · web-k8s-backupper</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script src="/static/theme.js" defer></script>
+    <style>
+      .tree{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px}
+      .tree ul{list-style:none;margin:0;padding-left:18px}
+      .tree .node{display:flex;align-items:center;gap:8px;line-height:1.4}
+      .tree .node .icon{width:1.2em;text-align:center}
+      .tree summary{cursor:pointer}
+      .meta{color:var(--muted);font-size:12px}
+      .toolbar{display:flex;gap:8px;align-items:center;margin-left:auto}
+    </style>
+  </head>
+  <body>
+    <header>
+      <a class="back" href="/">← All namespaces</a>
+      <h1 id="title">PVC Browser</h1>
+      <div class="toolbar">
+        <a href="#" class="button" data-role="theme-toggle" title="Theme">🌓</a>
+        <a id="refresh" href="#" class="button">Refresh</a>
+      </div>
+    </header>
+    <main>
+      <section>
+        <div id="info" class="meta"></div>
+        <div id="tree" class="tree"><div class="hint">Loading tree…</div></div>
+      </section>
+    </main>
+    <script>
+      function getParam(name) {
+        const u = new URL(window.location.href);
+        return u.searchParams.get(name);
+      }
+      const ns = getParam('ns');
+      const pvc = getParam('pvc');
+      document.getElementById('title').textContent = ns && pvc ? `${ns}/${pvc}` : 'PVC Browser';
+
+      document.getElementById('refresh').addEventListener('click', (e) => {
+        e.preventDefault(); loadTree();
+      });
+
+      function esc(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+
+      function renderTreeNode(node){
+        if(node.type === 'dir'){
+          const children = (node.children||[]).map(renderTreeNode).join('');
+          const label = esc(node.name === '/' ? '/' : node.name);
+          const open = node.name === '/';
+          return `
+            <details ${open ? 'open' : ''}>
+              <summary class="node"><span class="icon">📁</span><span>${label}</span></summary>
+              <ul>${children}</ul>
+            </details>
+          `;
+        }
+        if(node.type === 'file'){
+          const size = typeof node.size === 'number' ? ` <span class="meta">(${node.size} B)</span>` : '';
+          return `<li class="node"><span class="icon">📄</span><span>${esc(node.name)}</span>${size}</li>`;
+        }
+        if(node.type === 'link'){
+          const t = node.target ? ` <span class="meta">→ ${esc(node.target)}</span>` : '';
+          return `<li class="node"><span class="icon">🔗</span><span>${esc(node.name)}</span>${t}</li>`;
+        }
+        return `<li class="node"><span class="icon">❔</span><span>${esc(node.name)}</span></li>`;
+      }
+
+      async function loadTree(){
+        const el = document.getElementById('tree');
+        const info = document.getElementById('info');
+        el.innerHTML = '<div class="hint">Loading tree…</div>';
+        info.textContent = '';
+        try{
+          const url = `/api/namespaces/${encodeURIComponent(ns)}/pvcs/${encodeURIComponent(pvc)}/tree`;
+          const res = await fetch(url);
+          if(!res.ok){ throw new Error(`HTTP ${res.status}`); }
+          const data = await res.json();
+          const root = data.root || {name:'/', type:'dir', children:[]};
+          const html = renderTreeNode(root);
+          el.innerHTML = html;
+          if(data.truncated){
+            info.textContent = 'Note: Tree truncated. Use smaller scope or increase maxNodes.';
+          }
+        }catch(e){
+          el.innerHTML = `<div class="error">Failed to load tree: ${e}</div>`;
+        }
+      }
+
+      loadTree();
+    </script>
+  </body>
+  </html>
+

@@ -63,6 +63,7 @@
               <div class="title">${pvc.name}</div>
               <div class="desc">SC: ${pvc.storageClass || '-'} · Capacity: ${pvc.capacity || '-'} · Modes: ${(pvc.accessModes||[]).join(', ')}</div>
               <a class="button" href="/api/namespaces/${encodeURIComponent(ns)}/pvcs/${encodeURIComponent(pvc.name)}/download">Download PVC</a>
+              <a class="button" href="/pvc?ns=${encodeURIComponent(ns)}&pvc=${encodeURIComponent(pvc.name)}">Browse</a>
             </div>
           `).join('');
         } catch (e) {
