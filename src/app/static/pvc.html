@@ -28,7 +28,7 @@
     <main>
       <section>
         <div id="info" class="meta"></div>
-        <div id="tree" class="tree"><div class="hint">Loading tree…</div></div>
+        <div id="tree" class="tree"><div class="hint">Loading…</div></div>
       </section>
     </main>
     <script>
@@ -46,52 +46,73 @@
 
       function esc(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
 
-      function renderTreeNode(node){
-        if(node.type === 'dir'){
-          const children = (node.children||[]).map(renderTreeNode).join('');
-          const label = esc(node.name === '/' ? '/' : node.name);
-          const open = node.name === '/';
-          return `
-            <details ${open ? 'open' : ''}>
-              <summary class="node"><span class="icon">📁</span><span>${label}</span></summary>
-              <ul>${children}</ul>
-            </details>
-          `;
-        }
-        if(node.type === 'file'){
-          const size = typeof node.size === 'number' ? ` <span class="meta">(${node.size} B)</span>` : '';
-          return `<li class="node"><span class="icon">📄</span><span>${esc(node.name)}</span>${size}</li>`;
-        }
-        if(node.type === 'link'){
-          const t = node.target ? ` <span class="meta">→ ${esc(node.target)}</span>` : '';
-          return `<li class="node"><span class="icon">🔗</span><span>${esc(node.name)}</span>${t}</li>`;
-        }
-        return `<li class="node"><span class="icon">❔</span><span>${esc(node.name)}</span></li>`;
+      function nodeDirTemplate(label){
+        return `
+          <details>
+            <summary class="node"><span class="icon">📁</span><span>${label}</span></summary>
+            <ul><li class="node meta">Loading…</li></ul>
+          </details>
+        `;
       }
 
-      async function loadTree(){
-        const el = document.getElementById('tree');
-        const info = document.getElementById('info');
-        el.innerHTML = '<div class="hint">Loading tree…</div>';
-        info.textContent = '';
+      function nodeFileTemplate(label, fullPath){
+        const href = `/api/namespaces/${encodeURIComponent(ns)}/pvcs/${encodeURIComponent(pvc)}/file?path=${encodeURIComponent(fullPath)}`;
+        return `<li class="node"><span class="icon">📄</span><span>${label}</span> <a class="button" style="padding:2px 6px" href="${href}">Download</a></li>`;
+      }
+
+      async function fetchList(path){
+        const url = `/api/namespaces/${encodeURIComponent(ns)}/pvcs/${encodeURIComponent(pvc)}/ls?path=${encodeURIComponent(path)}`;
+        const res = await fetch(url);
+        if(!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      }
+
+      async function populateDir(container, path){
+        // container is the <ul> element inside details
         try{
-          const url = `/api/namespaces/${encodeURIComponent(ns)}/pvcs/${encodeURIComponent(pvc)}/tree`;
-          const res = await fetch(url);
-          if(!res.ok){ throw new Error(`HTTP ${res.status}`); }
-          const data = await res.json();
-          const root = data.root || {name:'/', type:'dir', children:[]};
-          const html = renderTreeNode(root);
-          el.innerHTML = html;
-          if(data.truncated){
-            info.textContent = 'Note: Tree truncated. Use smaller scope or increase maxNodes.';
+          const data = await fetchList(path);
+          const items = data.entries || [];
+          if(items.length === 0){
+            container.innerHTML = '<li class="node meta">(empty)</li>';
+            return;
           }
-        }catch(e){
-          el.innerHTML = `<div class="error">Failed to load tree: ${e}</div>`;
+          container.innerHTML = '';
+          for(const it of items){
+            const label = esc(it.name);
+            const fullPath = path === '.' ? it.name : `${path}/${it.name}`;
+            if(it.type === 'dir'){
+              const wrapper = document.createElement('li');
+              wrapper.innerHTML = nodeDirTemplate(label);
+              const details = wrapper.querySelector('details');
+              const ul = wrapper.querySelector('ul');
+              details.addEventListener('toggle', () => {
+                if(details.open && !details.dataset.loaded){
+                  details.dataset.loaded = '1';
+                  populateDir(ul, fullPath).catch(e => { ul.innerHTML = `<li class=\"node error\">${esc(String(e))}</li>`; });
+                }
+              }, { once: true });
+              container.appendChild(wrapper);
+            } else {
+              const li = document.createElement('li');
+              li.innerHTML = nodeFileTemplate(label, fullPath);
+              container.appendChild(li);
+            }
+          }
+        } catch(e){
+          container.innerHTML = `<li class="node error">Failed: ${esc(String(e))}</li>`;
         }
       }
 
-      loadTree();
+      async function init(){
+        const el = document.getElementById('tree');
+        el.innerHTML = nodeDirTemplate('/');
+        const rootDetails = el.querySelector('details');
+        rootDetails.setAttribute('open','');
+        const rootUl = el.querySelector('ul');
+        await populateDir(rootUl, '.');
+      }
+
+      init();
     </script>
   </body>
   </html>
-

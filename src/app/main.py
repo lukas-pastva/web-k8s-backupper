@@ -10,7 +10,7 @@ import zipfile
 import stat
 
 from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
@@ -667,6 +667,91 @@ def pvc_tree(ns: str, pvc: str, path: str = ".", maxNodes: int = 5000):
         return result
     except Exception as e:
         raise
+
+
+@app.get("/api/namespaces/{ns}/pvcs/{pvc}/ls")
+def pvc_ls(ns: str, pvc: str, path: str = "."):
+    pod_name = ensure_helper_pod(ns, pvc)
+    rel = _sanitize_rel_path(path)
+    try:
+        cmd = ["/bin/sh", "-lc", f"cd /data && ls -A1p -- {sh_quote(rel)}"]
+        out, err = _exec_in_pod(ns, pod_name, cmd)
+        if err and ARCHIVE_DEBUG:
+            logger.debug("PVC ls stderr: %s", err.strip())
+        entries = []
+        for line in out.splitlines():
+            name = line.strip()
+            if not name:
+                continue
+            typ = "dir" if name.endswith("/") else "file"
+            clean_name = name[:-1] if typ == "dir" else name
+            entries.append({"name": clean_name, "type": typ})
+        return {"path": rel, "entries": entries}
+    finally:
+        try:
+            core.delete_namespaced_pod(name=pod_name, namespace=ns, grace_period_seconds=0)
+        except Exception:
+            pass
+
+
+def sh_quote(s: str) -> str:
+    # Minimal shell quoting
+    return "'" + s.replace("'", "'\\''") + "'"
+
+
+def stream_file_from_pod(ns: str, pod_name: str, rel_path: str) -> Iterator[bytes]:
+    cmd = ["/bin/sh", "-lc", f"cat -- {sh_quote(os.path.join('/data', rel_path))}"]
+    resp = k8s_stream(
+        core.connect_get_namespaced_pod_exec,
+        pod_name,
+        ns,
+        command=cmd,
+        stderr=True,
+        stdin=False,
+        stdout=True,
+        tty=False,
+        _preload_content=False,
+    )
+    try:
+        while resp.is_open():
+            resp.update(timeout=5)
+            if resp.peek_stdout():
+                chunk = resp.read_stdout()
+                if isinstance(chunk, str):
+                    chunk = chunk.encode()
+                if chunk:
+                    yield chunk
+            if resp.peek_stderr():
+                err = resp.read_stderr()
+                if err:
+                    estr = err if isinstance(err, str) else err.decode(errors="replace")
+                    if ARCHIVE_DEBUG:
+                        logger.debug("PVC file stderr: %s", estr.strip())
+    finally:
+        resp.close()
+
+
+@app.get("/api/namespaces/{ns}/pvcs/{pvc}/file")
+def pvc_file_download(ns: str, pvc: str, path: str):
+    rel = _sanitize_rel_path(path)
+    pod_name = ensure_helper_pod(ns, pvc)
+
+    filename = os.path.basename(rel) or "file"
+    headers = {"Content-Disposition": f"attachment; filename={filename}"}
+
+    def cleanup():
+        try:
+            core.delete_namespaced_pod(name=pod_name, namespace=ns, grace_period_seconds=0)
+        except Exception:
+            pass
+
+    logger.info("Starting PVC file download: ns=%s pvc=%s path=%s pod=%s", ns, pvc, rel, pod_name)
+    return StreamingResponse(
+        stream_file_from_pod(ns, pod_name, rel),
+        media_type="application/octet-stream",
+        headers=headers,
+        background=BackgroundTask(cleanup),
+    )
 
 
 @app.get("/api/namespaces/{ns}/pvcs/{pvc}/download")
