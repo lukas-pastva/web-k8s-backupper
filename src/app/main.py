@@ -150,7 +150,13 @@ def ensure_helper_pod(ns: str, pvc: str) -> str:
                     image=os.environ.get("READER_IMAGE", "alpine:3.19"),
                     command=["/bin/sh", "-c", "sleep 3600"],
                     volume_mounts=[client.V1VolumeMount(name="data", mount_path="/data")],
-                    security_context=client.V1SecurityContext(run_as_non_root=True, allow_privilege_escalation=False),
+                    # Ensure the container does not run as root even if the image default is root
+                    security_context=client.V1SecurityContext(
+                        run_as_non_root=True,
+                        run_as_user=int(os.environ.get("READER_UID", "1000")),
+                        run_as_group=int(os.environ.get("READER_GID", "1000")),
+                        allow_privilege_escalation=False,
+                    ),
                 )
             ],
             volumes=[client.V1Volume(name="data", persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(claim_name=pvc))],
