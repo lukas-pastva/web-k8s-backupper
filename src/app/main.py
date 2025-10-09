@@ -1,6 +1,12 @@
 import os
 import time
 from typing import Dict, List, Iterator
+import io
+import queue
+import threading
+import tarfile
+import zipfile
+import stat
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
@@ -179,8 +185,18 @@ def ensure_helper_pod(ns: str, pvc: str) -> str:
     raise HTTPException(status_code=500, detail="Helper pod did not become Running")
 
 
-def stream_tar_from_pod(ns: str, pod_name: str) -> Iterator[bytes]:
-    cmd = ["tar", "czf", "-", "-C", "/data", "."]
+def _exec_tar_stream(ns: str, pod_name: str, gzip: bool = False):
+    """
+    Start a tar stream from the helper pod. If gzip is True, compress; otherwise plain tar.
+
+    Returns the Kubernetes stream response object which exposes read methods and lifecycle.
+    """
+    cmd = ["tar"]
+    if gzip:
+        cmd += ["czf", "-"]
+    else:
+        cmd += ["cf", "-"]
+    cmd += ["-C", "/data", "."]
     resp = k8s_stream(
         core.connect_get_namespaced_pod_exec,
         pod_name,
@@ -192,6 +208,12 @@ def stream_tar_from_pod(ns: str, pod_name: str) -> Iterator[bytes]:
         tty=False,
         _preload_content=False,
     )
+    return resp
+
+
+def stream_tar_from_pod(ns: str, pod_name: str) -> Iterator[bytes]:
+    """Backwards-compatible: yield a gzipped tar stream of the PVC contents."""
+    resp = _exec_tar_stream(ns, pod_name, gzip=True)
     try:
         while resp.is_open():
             resp.update(timeout=5)
@@ -206,10 +228,146 @@ def stream_tar_from_pod(ns: str, pod_name: str) -> Iterator[bytes]:
         resp.close()
 
 
+class _IteratorReader:
+    """Wrap an iterator of bytes into a file-like object with .read()."""
+
+    def __init__(self, iterator: Iterator[bytes]):
+        self._it = iterator
+        self._buf = bytearray()
+        self._done = False
+
+    def read(self, n: int = -1) -> bytes:
+        if n is None or n < 0:
+            # Read all
+            chunks = [bytes(self._buf)]
+            self._buf.clear()
+            for ch in self._it:
+                chunks.append(ch)
+            self._done = True
+            return b"".join(chunks)
+
+        while len(self._buf) < n and not self._done:
+            try:
+                ch = next(self._it)
+                if ch:
+                    self._buf.extend(ch)
+                else:
+                    # Empty chunk – continue
+                    continue
+            except StopIteration:
+                self._done = True
+                break
+        if n < 0:
+            n = len(self._buf)
+        out = bytes(self._buf[:n])
+        del self._buf[:n]
+        return out
+
+
+class _QueueWriter:
+    """File-like that pushes written bytes into a queue for streaming."""
+
+    def __init__(self):
+        self.q: "queue.Queue[bytes | None]" = queue.Queue(maxsize=16)
+        self.closed = False
+
+    def write(self, b: bytes):
+        if not b:
+            return 0
+        self.q.put(b)
+        return len(b)
+
+    def flush(self):
+        return
+
+    def close(self):
+        if not self.closed:
+            self.closed = True
+            self.q.put(None)
+
+    def reader(self):
+        while True:
+            item = self.q.get()
+            if item is None:
+                break
+            yield item
+
+
+def _tar_to_zip_stream(tar_stream: Iterator[bytes]) -> Iterator[bytes]:
+    """
+    Convert a (plain) tar byte-stream into a zip byte-stream on the fly.
+    Uses a background thread to write into a queue-backed writer while the
+    generator yields from that queue.
+    """
+
+    writer = _QueueWriter()
+
+    def worker():
+        try:
+            tar_fileobj = _IteratorReader(tar_stream)
+            # Streaming read of tar
+            with tarfile.open(fileobj=tar_fileobj, mode="r|") as tf:
+                with zipfile.ZipFile(writer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                    for ti in tf:
+                        name = ti.name.lstrip("./")
+                        if not name:
+                            continue
+                        # Directories
+                        if ti.isdir():
+                            if not name.endswith("/"):
+                                name += "/"
+                            zinfo = zipfile.ZipInfo(filename=name)
+                            # Preserve basic permissions for dirs
+                            perm = ti.mode if ti.mode else 0o755
+                            zinfo.external_attr = (stat.S_IFDIR | perm) << 16
+                            zf.writestr(zinfo, b"")
+                            continue
+
+                        # Regular files
+                        if ti.isreg():
+                            src = tf.extractfile(ti)
+                            if src is None:
+                                continue
+                            zinfo = zipfile.ZipInfo(filename=name)
+                            perm = ti.mode if ti.mode else 0o644
+                            zinfo.external_attr = (stat.S_IFREG | perm) << 16
+                            with zf.open(zinfo, mode="w") as dest:
+                                while True:
+                                    chunk = src.read(1024 * 1024)
+                                    if not chunk:
+                                        break
+                                    dest.write(chunk)
+                            continue
+
+                        # Symlinks and other types: store a small text note
+                        if ti.issym() or ti.islnk():
+                            target = ti.linkname or ""
+                            info = f"SYMLINK -> {target}\n".encode()
+                            zinfo = zipfile.ZipInfo(filename=name)
+                            zinfo.external_attr = (stat.S_IFLNK | 0o777) << 16
+                            zf.writestr(zinfo, info)
+                            continue
+
+                        # Fallback: skip unknown types
+        finally:
+            # Ensure the writer signals completion
+            try:
+                writer.close()
+            except Exception:
+                pass
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    # Yield data as produced
+    for chunk in writer.reader():
+        yield chunk
+
+
 @app.get("/api/namespaces/{ns}/pvcs/{pvc}/download")
 def download_pvc(ns: str, pvc: str):
     pod_name = ensure_helper_pod(ns, pvc)
-    filename = f"{ns}-{pvc}.tar.gz"
+    # Produce a .zip archive instead of .tar.gz
+    filename = f"{ns}-{pvc}.zip"
     headers = {"Content-Disposition": f"attachment; filename={filename}"}
 
     def cleanup():
@@ -218,9 +376,27 @@ def download_pvc(ns: str, pvc: str):
         except Exception:
             pass
 
+    # Create a plain tar stream from the pod and transcode to zip on the fly
+    resp = _exec_tar_stream(ns, pod_name, gzip=False)
+
+    def tar_iter() -> Iterator[bytes]:
+        try:
+            while resp.is_open():
+                resp.update(timeout=5)
+                if resp.peek_stdout():
+                    chunk = resp.read_stdout()
+                    if isinstance(chunk, str):
+                        chunk = chunk.encode()
+                    if chunk:
+                        yield chunk
+                if resp.peek_stderr():
+                    _ = resp.read_stderr()
+        finally:
+            resp.close()
+
     return StreamingResponse(
-        stream_tar_from_pod(ns, pod_name),
-        media_type="application/gzip",
+        _tar_to_zip_stream(tar_iter()),
+        media_type="application/zip",
         headers=headers,
         background=BackgroundTask(cleanup),
     )
