@@ -200,6 +200,12 @@ def get_object_manifest(ns: str, kind: str, name: str, download: bool = False):
 
 def ensure_helper_pod(ns: str, pvc: str) -> str:
     name = f"wkb-pvc-reader-{pvc[:40]}-{int(time.time())}"
+    # Security context: by default run as root to ensure readable access to all files
+    # You can override via env READER_UID/READER_GID to run non-root
+    uid = int(os.environ.get("READER_UID", "0"))
+    gid = int(os.environ.get("READER_GID", "0"))
+    run_as_non_root = uid != 0
+    read_only_mount = os.environ.get("READER_READONLY", "1") in ("1", "true", "True")
     pod = client.V1Pod(
         api_version="v1",
         kind="Pod",
@@ -211,12 +217,12 @@ def ensure_helper_pod(ns: str, pvc: str) -> str:
                     name="reader",
                     image=os.environ.get("READER_IMAGE", "alpine:3.19"),
                     command=["/bin/sh", "-c", "sleep 3600"],
-                    volume_mounts=[client.V1VolumeMount(name="data", mount_path="/data")],
-                    # Ensure the container does not run as root even if the image default is root
+                    volume_mounts=[client.V1VolumeMount(name="data", mount_path="/data", read_only=read_only_mount)],
+                    # Default to root to maximize readability; can be overridden via env
                     security_context=client.V1SecurityContext(
-                        run_as_non_root=True,
-                        run_as_user=int(os.environ.get("READER_UID", "1000")),
-                        run_as_group=int(os.environ.get("READER_GID", "1000")),
+                        run_as_non_root=run_as_non_root,
+                        run_as_user=uid,
+                        run_as_group=gid,
                         allow_privilege_escalation=False,
                     ),
                 )
@@ -472,7 +478,16 @@ def download_pvc(ns: str, pvc: str):
         except Exception:
             pass
 
-    logger.info("Starting PVC download: ns=%s pvc=%s pod=%s format=zip", ns, pvc, pod_name)
+    # Log effective reader context
+    logger.info(
+        "Starting PVC download: ns=%s pvc=%s pod=%s format=zip READER_UID=%s READER_GID=%s READONLY=%s",
+        ns,
+        pvc,
+        pod_name,
+        os.environ.get("READER_UID", "0"),
+        os.environ.get("READER_GID", "0"),
+        os.environ.get("READER_READONLY", "1"),
+    )
     # Create a plain tar stream from the pod and transcode to zip on the fly
     resp = _exec_tar_stream(ns, pod_name, gzip=False)
 
@@ -494,8 +509,13 @@ def download_pvc(ns: str, pvc: str):
                             last_log = bytes_read
                 if resp.peek_stderr():
                     err = resp.read_stderr()
-                    if err and ARCHIVE_DEBUG:
-                        logger.debug("PVC tar stderr: %s", err)
+                    if err:
+                        # Always surface likely permission or access errors
+                        estr = err if isinstance(err, str) else err.decode(errors="replace")
+                        if any(k in estr for k in ["Permission denied", "permission denied", "Operation not permitted", "No such file or directory"]):
+                            logger.warning("PVC tar stderr: %s", estr.strip())
+                        elif ARCHIVE_DEBUG:
+                            logger.debug("PVC tar stderr: %s", estr.strip())
         finally:
             resp.close()
             logger.info("PVC tar stream closed: ns=%s pvc=%s bytes=%d", ns, pvc, bytes_read)
