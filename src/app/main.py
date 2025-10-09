@@ -310,12 +310,18 @@ class _QueueWriter:
     def __init__(self):
         self.q: "queue.Queue[bytes | None]" = queue.Queue(maxsize=16)
         self.closed = False
+        self._pos = 0
 
     def write(self, b: bytes):
         if not b:
             return 0
-        self.q.put(b)
-        return len(b)
+        # Ensure bytes-like
+        if not isinstance(b, (bytes, bytearray, memoryview)):
+            b = bytes(b)
+        blen = len(b)
+        self.q.put(bytes(b))
+        self._pos += blen
+        return blen
 
     def flush(self):
         return
@@ -324,6 +330,16 @@ class _QueueWriter:
         if not self.closed:
             self.closed = True
             self.q.put(None)
+
+    # ZipFile checks these to decide behavior on non-seekable streams
+    def seekable(self) -> bool:
+        return False
+
+    def writable(self) -> bool:
+        return True
+
+    def tell(self) -> int:
+        return self._pos
 
     def reader(self):
         while True:
