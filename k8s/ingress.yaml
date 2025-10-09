@@ -1,0 +1,20 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web-k8s-backupper
+  namespace: web-k8s-backupper
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  rules:
+    - host: web-k8s-backupper.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web-k8s-backupper
+                port:
+                  number: 80
+

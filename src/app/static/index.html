@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>web-k8s-backupper</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>web-k8s-backupper</h1>
+      <p class="subtitle">Browse namespaces, download manifests, and PVC snapshots</p>
+    </header>
+    <main>
+      <section>
+        <h2>Namespaces</h2>
+        <div id="ns-list" class="cards"></div>
+      </section>
+    </main>
+    <script>
+      async function loadNamespaces() {
+        const el = document.getElementById('ns-list');
+        el.innerHTML = '<div class="hint">Loading namespaces…</div>';
+        try {
+          const res = await fetch('/api/namespaces');
+          const data = await res.json();
+          if (!Array.isArray(data) || data.length === 0) {
+            el.innerHTML = '<div class="hint">No namespaces found.</div>';
+            return;
+          }
+          el.innerHTML = data.map(ns => `
+            <a class="card" href="/namespace?ns=${encodeURIComponent(ns)}">
+              <div class="title">${ns}</div>
+              <div class="desc">Open namespace details</div>
+            </a>
+          `).join('');
+        } catch (e) {
+          el.innerHTML = `<div class="error">Failed to load namespaces: ${e}</div>`;
+        }
+      }
+      loadNamespaces();
+    </script>
+  </body>
+  </html>
+

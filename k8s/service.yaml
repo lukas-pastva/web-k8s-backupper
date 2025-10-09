@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-k8s-backupper
+  namespace: web-k8s-backupper
+  labels:
+    app: web-k8s-backupper
+spec:
+  type: ClusterIP
+  selector:
+    app: web-k8s-backupper
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+

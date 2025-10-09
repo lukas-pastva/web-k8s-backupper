@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-k8s-backupper
+  namespace: web-k8s-backupper
+  labels:
+    app: web-k8s-backupper
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web-k8s-backupper
+  template:
+    metadata:
+      labels:
+        app: web-k8s-backupper
+    spec:
+      serviceAccountName: web-k8s-backupper
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: app
+          image: registry.hub.docker.com/lukaspastva/web-k8s-backupper:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+
