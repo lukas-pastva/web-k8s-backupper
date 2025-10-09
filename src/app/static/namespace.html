@@ -5,12 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Namespace · web-k8s-backupper</title>
     <link rel="stylesheet" href="/static/styles.css" />
+    <script src="/static/theme.js" defer></script>
   </head>
   <body>
     <header>
       <a class="back" href="/">← All namespaces</a>
       <h1 id="ns-title"></h1>
       <div class="actions">
+        <a href="#" class="button" data-role="theme-toggle">Theme</a>
         <label><input type="checkbox" id="includeSecrets" /> Include Secrets</label>
         <a id="view-manifests" class="button" href="#" target="_blank">View Manifests</a>
         <a id="dl-manifests" class="button" href="#">Download Manifests</a>
