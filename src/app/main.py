@@ -1,6 +1,7 @@
 import os
 import time
 from typing import Dict, List, Iterator
+import logging
 import io
 import queue
 import threading
@@ -37,6 +38,21 @@ rbac = client.RbacAuthorizationV1Api()
 app = FastAPI(title="web-k8s-backupper")
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+# Logging
+logger = logging.getLogger("web_k8s_backupper")
+_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+try:
+    logger.setLevel(getattr(logging, _level))
+except Exception:
+    logger.setLevel(logging.INFO)
+if not logger.handlers:
+    # Basic console handler if not already configured by the ASGI server
+    h = logging.StreamHandler()
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    h.setFormatter(fmt)
+    logger.addHandler(h)
+ARCHIVE_DEBUG = os.environ.get("ARCHIVE_DEBUG", "0") in ("1", "true", "True")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -209,6 +225,7 @@ def ensure_helper_pod(ns: str, pvc: str) -> str:
         ),
     )
     try:
+        logger.info("Creating helper pod for PVC export: ns=%s pvc=%s name=%s", ns, pvc, name)
         core.create_namespaced_pod(namespace=ns, body=pod)
     except client.exceptions.ApiException as e:
         if e.status != 409:
@@ -218,6 +235,7 @@ def ensure_helper_pod(ns: str, pvc: str) -> str:
     for _ in range(120):
         p = core.read_namespaced_pod(name=name, namespace=ns)
         if p.status.phase == "Running":
+            logger.info("Helper pod is Running: %s/%s", ns, name)
             return name
         if p.status.phase in ("Failed", "Succeeded"):
             break
@@ -363,7 +381,12 @@ def _tar_to_zip_stream(tar_stream: Iterator[bytes]) -> Iterator[bytes]:
             tar_fileobj = _IteratorReader(tar_stream)
             # Streaming read of tar
             with tarfile.open(fileobj=tar_fileobj, mode="r|") as tf:
-                with zipfile.ZipFile(writer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                with zipfile.ZipFile(writer, mode="w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+                    count_files = 0
+                    count_dirs = 0
+                    count_links = 0
+                    total_in_bytes = 0
+                    total_out_files = 0
                     for ti in tf:
                         name = ti.name.lstrip("./")
                         if not name:
@@ -377,6 +400,9 @@ def _tar_to_zip_stream(tar_stream: Iterator[bytes]) -> Iterator[bytes]:
                             perm = ti.mode if ti.mode else 0o755
                             zinfo.external_attr = (stat.S_IFDIR | perm) << 16
                             zf.writestr(zinfo, b"")
+                            count_dirs += 1
+                            if ARCHIVE_DEBUG:
+                                logger.debug("ZIP add dir: %s", name)
                             continue
 
                         # Regular files
@@ -393,6 +419,11 @@ def _tar_to_zip_stream(tar_stream: Iterator[bytes]) -> Iterator[bytes]:
                                     if not chunk:
                                         break
                                     dest.write(chunk)
+                                    total_in_bytes += len(chunk)
+                            count_files += 1
+                            total_out_files += 1
+                            if ARCHIVE_DEBUG:
+                                logger.debug("ZIP add file: %s (size≈%s bytes)", name, ti.size)
                             continue
 
                         # Symlinks and other types: store a small text note
@@ -402,9 +433,18 @@ def _tar_to_zip_stream(tar_stream: Iterator[bytes]) -> Iterator[bytes]:
                             zinfo = zipfile.ZipInfo(filename=name)
                             zinfo.external_attr = (stat.S_IFLNK | 0o777) << 16
                             zf.writestr(zinfo, info)
+                            count_links += 1
+                            if ARCHIVE_DEBUG:
+                                logger.debug("ZIP add link: %s -> %s", name, target)
                             continue
 
                         # Fallback: skip unknown types
+                    logger.info(
+                        "ZIP stream complete: files=%d dirs=%d links=%d bytes_in≈%d",
+                        count_files, count_dirs, count_links, total_in_bytes,
+                    )
+        except Exception:
+            logger.exception("Error while converting tar->zip stream")
         finally:
             # Ensure the writer signals completion
             try:
@@ -432,10 +472,13 @@ def download_pvc(ns: str, pvc: str):
         except Exception:
             pass
 
+    logger.info("Starting PVC download: ns=%s pvc=%s pod=%s format=zip", ns, pvc, pod_name)
     # Create a plain tar stream from the pod and transcode to zip on the fly
     resp = _exec_tar_stream(ns, pod_name, gzip=False)
 
     def tar_iter() -> Iterator[bytes]:
+        bytes_read = 0
+        last_log = 0
         try:
             while resp.is_open():
                 resp.update(timeout=5)
@@ -445,10 +488,17 @@ def download_pvc(ns: str, pvc: str):
                         chunk = chunk.encode()
                     if chunk:
                         yield chunk
+                        bytes_read += len(chunk)
+                        if ARCHIVE_DEBUG and bytes_read - last_log >= 10 * 1024 * 1024:
+                            logger.debug("PVC tar bytes streamed: %d", bytes_read)
+                            last_log = bytes_read
                 if resp.peek_stderr():
-                    _ = resp.read_stderr()
+                    err = resp.read_stderr()
+                    if err and ARCHIVE_DEBUG:
+                        logger.debug("PVC tar stderr: %s", err)
         finally:
             resp.close()
+            logger.info("PVC tar stream closed: ns=%s pvc=%s bytes=%d", ns, pvc, bytes_read)
 
     return StreamingResponse(
         _tar_to_zip_stream(tar_iter()),

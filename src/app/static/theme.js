@@ -22,9 +22,12 @@
 
   function updateButtons() {
     const cur = getTheme();
-    const label = `Theme: ${cur[0].toUpperCase()}${cur.slice(1)}`;
+    const icons = { auto: '🌓', light: '☀️', dark: '🌙' };
+    const titles = { auto: 'Theme: Auto (system)', light: 'Theme: Light', dark: 'Theme: Dark' };
     document.querySelectorAll('[data-role="theme-toggle"]').forEach(el => {
-      el.textContent = label;
+      el.textContent = icons[cur] || '🌓';
+      el.title = titles[cur] || 'Theme';
+      el.setAttribute('aria-label', titles[cur] || 'Theme');
     });
   }
 
@@ -52,4 +55,3 @@
     init();
   }
 })();
-
