@@ -46,18 +46,31 @@
 
       function esc(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
 
-      function nodeDirTemplate(label){
+      function zipHref(path){
+        return `/api/namespaces/${encodeURIComponent(ns)}/pvcs/${encodeURIComponent(pvc)}/zip?path=${encodeURIComponent(path)}`;
+      }
+
+      function nodeDirTemplate(label, path){
         return `
           <details>
-            <summary class="node"><span class="icon">📁</span><span>${label}</span></summary>
+            <summary class="node"><span class="icon">📁</span><span>${label}</span>
+              <span style="margin-left:auto"></span>
+              <a class="button sm" href="${zipHref(path)}" onclick="event.stopPropagation()">ZIP</a>
+            </summary>
             <ul><li class="node meta">Loading…</li></ul>
           </details>
         `;
       }
 
-      function nodeFileTemplate(label, fullPath){
+      function nodeFileTemplate(label, fullPath, size, mtime){
         const href = `/api/namespaces/${encodeURIComponent(ns)}/pvcs/${encodeURIComponent(pvc)}/file?path=${encodeURIComponent(fullPath)}`;
-        return `<li class="node"><span class="icon">📄</span><span>${label}</span> <a class="button" style="padding:2px 6px" href="${href}">Download</a></li>`;
+        const prev = `/api/namespaces/${encodeURIComponent(ns)}/pvcs/${encodeURIComponent(pvc)}/preview?path=${encodeURIComponent(fullPath)}`;
+        const meta = renderMeta(size, mtime);
+        return `<li class="node"><span class="icon">📄</span><span>${label}</span> ${meta}
+          <span style="margin-left:auto"></span>
+          <a class="button sm" href="${prev}" target="_blank">Preview</a>
+          <a class="button sm" href="${href}">Download</a>
+        </li>`;
       }
 
       async function fetchList(path){
@@ -65,6 +78,18 @@
         const res = await fetch(url);
         if(!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
+      }
+
+      function humanSize(n){
+        const units=['B','KB','MB','GB','TB'];
+        let i=0, v=Number(n)||0; while(v>=1024 && i<units.length-1){ v/=1024; i++; }
+        return `${v.toFixed(v<10&&i>0?1:0)} ${units[i]}`;
+      }
+
+      function renderMeta(size, mtime){
+        const parts=[]; if(Number.isFinite(size)) parts.push(humanSize(size));
+        if(Number.isFinite(mtime) && mtime>0){ parts.push(new Date(mtime*1000).toLocaleString()); }
+        return parts.length?`<span class="meta">(${parts.join(' · ')})</span>`:'';
       }
 
       async function populateDir(container, path){
@@ -82,7 +107,7 @@
             const fullPath = path === '.' ? it.name : `${path}/${it.name}`;
             if(it.type === 'dir'){
               const wrapper = document.createElement('li');
-              wrapper.innerHTML = nodeDirTemplate(label);
+              wrapper.innerHTML = nodeDirTemplate(label, fullPath);
               const details = wrapper.querySelector('details');
               const ul = wrapper.querySelector('ul');
               details.addEventListener('toggle', () => {
@@ -94,7 +119,7 @@
               container.appendChild(wrapper);
             } else {
               const li = document.createElement('li');
-              li.innerHTML = nodeFileTemplate(label, fullPath);
+              li.innerHTML = nodeFileTemplate(label, fullPath, it.size, it.mtime);
               container.appendChild(li);
             }
           }
@@ -105,7 +130,7 @@
 
       async function init(){
         const el = document.getElementById('tree');
-        el.innerHTML = nodeDirTemplate('/');
+        el.innerHTML = nodeDirTemplate('/', '.');
         const rootDetails = el.querySelector('details');
         rootDetails.setAttribute('open','');
         const rootUl = el.querySelector('ul');

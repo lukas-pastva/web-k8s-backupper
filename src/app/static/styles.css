@@ -31,6 +31,7 @@ main{padding:20px;max-width:1100px;margin:0 auto}
 .card{background:var(--panel);border:1px solid var(--border);padding:14px;border-radius:10px;text-decoration:none;color:var(--text);display:flex;flex-direction:column;gap:6px}
 .card .title{font-weight:600}.card .desc{color:var(--muted);font-size:12px}
 .button{display:inline-flex;align-items:center;gap:8px;background:var(--accent);color:#0b1020;border:none;padding:8px 12px;border-radius:8px;text-decoration:none;font-weight:600}
+.button.sm{padding:2px 6px;font-size:12px}
 .button:hover{background:#95c0ff}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
 .panel{background:var(--panel);border:1px solid var(--border);border-radius:10px}
