@@ -12,6 +12,7 @@
       <h1 id="ns-title"></h1>
       <div class="actions">
         <label><input type="checkbox" id="includeSecrets" /> Include Secrets</label>
+        <a id="view-manifests" class="button" href="#" target="_blank">View Manifests</a>
         <a id="dl-manifests" class="button" href="#">Download Manifests</a>
       </div>
     </header>
@@ -36,12 +37,14 @@
 
       const includeSecrets = document.getElementById('includeSecrets');
       const dl = document.getElementById('dl-manifests');
-      function updateDlHref() {
+      const view = document.getElementById('view-manifests');
+      function updateManifestLinks() {
         const inc = includeSecrets.checked ? 'true' : 'false';
-        dl.href = `/api/namespaces/${encodeURIComponent(ns)}/manifests?includeSecrets=${inc}`;
+        view.href = `/api/namespaces/${encodeURIComponent(ns)}/manifests?includeSecrets=${inc}&download=false`;
+        dl.href = `/api/namespaces/${encodeURIComponent(ns)}/manifests?includeSecrets=${inc}&download=true`;
       }
-      includeSecrets.addEventListener('change', updateDlHref);
-      updateDlHref();
+      includeSecrets.addEventListener('change', updateManifestLinks);
+      updateManifestLinks();
 
       async function loadPVCs() {
         const el = document.getElementById('pvcs');
@@ -79,7 +82,9 @@
           el.innerHTML = kinds.map(k => `
             <div class="panel">
               <div class="panel-title">${k}</div>
-              <div class="panel-body">${(data[k]||[]).map(n => `<code>${n}</code>`).join(' ')}</div>
+              <div class="panel-body panel-list">${(data[k]||[]).map(n => `
+                <a class="obj-item" target="_blank" href="/api/namespaces/${encodeURIComponent(ns)}/objects/${encodeURIComponent(k)}/${encodeURIComponent(n)}/manifest?download=false">${n}</a>
+              `).join('')}</div>
             </div>
           `).join('');
         } catch (e) {
@@ -92,4 +97,3 @@
     </script>
   </body>
   </html>
-

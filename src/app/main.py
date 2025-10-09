@@ -108,7 +108,7 @@ def to_yaml_docs(objs: List[dict]) -> str:
 
 
 @app.get("/api/namespaces/{ns}/manifests")
-def download_manifests(ns: str, includeSecrets: bool = False):
+def download_manifests(ns: str, includeSecrets: bool = False, download: bool = True):
     docs: List[dict] = []
 
     # Core
@@ -138,7 +138,47 @@ def download_manifests(ns: str, includeSecrets: bool = False):
 
     content = to_yaml_docs(docs)
     filename = f"{ns}-manifests.yaml"
-    headers = {"Content-Disposition": f"attachment; filename={filename}"}
+    headers = {}
+    if download:
+        headers["Content-Disposition"] = f"attachment; filename={filename}"
+    return Response(content=content, media_type="application/x-yaml", headers=headers)
+
+
+@app.get("/api/namespaces/{ns}/objects/{kind}/{name}/manifest")
+def get_object_manifest(ns: str, kind: str, name: str, download: bool = False):
+    kind = kind.lower()
+
+    # Map plural kinds to read functions
+    readers = {
+        "pods": core.read_namespaced_pod,
+        "services": core.read_namespaced_service,
+        "configmaps": core.read_namespaced_config_map,
+        "secrets": core.read_namespaced_secret,
+        "persistentvolumeclaims": core.read_namespaced_persistent_volume_claim,
+        "deployments": apps.read_namespaced_deployment,
+        "statefulsets": apps.read_namespaced_stateful_set,
+        "daemonsets": apps.read_namespaced_daemon_set,
+        "jobs": batch.read_namespaced_job,
+        "cronjobs": batch.read_namespaced_cron_job,
+        "ingresses": networking.read_namespaced_ingress,
+        "roles": rbac.read_namespaced_role,
+        "rolebindings": rbac.read_namespaced_role_binding,
+    }
+    reader = readers.get(kind)
+    if not reader:
+        raise HTTPException(status_code=400, detail=f"Unsupported kind: {kind}")
+
+    try:
+        obj = reader(name=name, namespace=ns)
+    except client.exceptions.ApiException as e:
+        status = e.status or 500
+        raise HTTPException(status_code=status, detail=e.reason)
+
+    content = to_yaml_docs([obj.to_dict()])
+    headers = {}
+    if download:
+        filename = f"{ns}-{kind}-{name}.yaml"
+        headers["Content-Disposition"] = f"attachment; filename={filename}"
     return Response(content=content, media_type="application/x-yaml", headers=headers)
 
 
