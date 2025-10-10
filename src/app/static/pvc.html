@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PVC Browser · web-k8s-backupper</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/static/styles.css" />
     <script src="/static/theme.js" defer></script>
     <style>
@@ -18,7 +19,7 @@
   </head>
   <body>
     <header>
-      <a id="back-ns" href="#" class="button">⬅ Back</a>
+      <nav class="breadcrumbs"><a href="/">🗺️ Namespaces</a> <span>›</span> <a id="crumb-ns" href="#">🧭 </a> <span>›</span> <span id="crumb-pvc">💾 </span></nav>
       <h1 id="title">PVC Browser</h1>
       <a id="refresh" href="#" class="button">🔄 Refresh</a>
       <div class="actions">
@@ -38,19 +39,21 @@
       }
       const ns = getParam('ns');
       const pvc = getParam('pvc');
-      document.getElementById('title').textContent = ns && pvc ? `${ns}/${pvc}` : 'PVC Browser';
+      document.getElementById('title').textContent = ns && pvc ? `💾 ${ns}/${pvc}` : '💾 PVC Browser';
 
       document.getElementById('refresh').addEventListener('click', (e) => {
         e.preventDefault(); loadTree();
       });
 
       // Back button (right toolbar)
-      const backNs = document.getElementById('back-ns');
-      if (ns) {
-        backNs.href = `/namespace?ns=${encodeURIComponent(ns)}`;
-      } else {
-        // Fallback to history if ns not provided
-        backNs.addEventListener('click', (e) => { e.preventDefault(); history.back(); });
+      const crumbNs = document.getElementById('crumb-ns');
+      const crumbPvc = document.getElementById('crumb-pvc');
+      if (ns && crumbNs) {
+        crumbNs.href = `/namespace?ns=${encodeURIComponent(ns)}`;
+        crumbNs.textContent = `🧭 ${ns}`;
+      }
+      if (pvc && crumbPvc) {
+        crumbPvc.textContent = `💾 ${pvc}`;
       }
 
       function esc(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }

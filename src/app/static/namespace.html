@@ -4,12 +4,13 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Namespace · web-k8s-backupper</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/static/styles.css" />
     <script src="/static/theme.js" defer></script>
   </head>
   <body>
     <header>
-      <a class="button" href="/">⬅ All namespaces</a>
+      <nav class="breadcrumbs"><a href="/">🗺️ Namespaces</a> <span>›</span> <span id="crumb-ns"></span></nav>
       <h1 id="ns-title"></h1>
       <a id="view-manifests" class="button" href="#" target="_blank">📄 View Manifests</a>
       <a id="dl-manifests" class="button" href="#">⬇️ Download Manifests</a>
@@ -33,8 +34,10 @@
         return u.searchParams.get(name);
       }
 
-  const ns = getParam('ns');
-  document.getElementById('ns-title').textContent = ns ? `Namespace: ${ns}` : 'Namespace';
+      const ns = getParam('ns');
+      document.getElementById('ns-title').textContent = ns ? `🧭 Namespace: ${ns}` : '🧭 Namespace';
+      const crumbNs = document.getElementById('crumb-ns');
+      if (crumbNs) crumbNs.textContent = ns || '';
 
       const dl = document.getElementById('dl-manifests');
       const view = document.getElementById('view-manifests');
@@ -77,7 +80,7 @@
             <div class="card">
               <div class="title">${pvc.name}</div>
               <div class="desc">SC: ${pvc.storageClass || '-'} · Capacity: ${pvc.capacity || '-'} · Modes: ${(pvc.accessModes||[]).join(', ')}</div>
-              <a class="button" href="/api/namespaces/${encodeURIComponent(ns)}/pvcs/${encodeURIComponent(pvc.name)}/download">⬇️ Download PVC</a>
+              <a class="button" href="/api/namespaces/${encodeURIComponent(ns)}/pvcs/${encodeURIComponent(pvc.name)}/download">🗜️ ZIP PVC</a>
               <a class="button" href="/pvc?ns=${encodeURIComponent(ns)}&pvc=${encodeURIComponent(pvc.name)}">📂 Browse</a>
             </div>
           `).join('');
