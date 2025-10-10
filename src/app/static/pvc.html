@@ -18,9 +18,10 @@
   </head>
   <body>
     <header>
-      <a class="back" href="/">← All namespaces</a>
+      <a id="back-all" class="back" href="/">← All namespaces</a>
       <h1 id="title">PVC Browser</h1>
       <div class="toolbar">
+        <a id="back-ns" href="#" class="button">Back</a>
         <a href="#" class="button" data-role="theme-toggle" title="Theme">🌓</a>
         <a id="refresh" href="#" class="button">Refresh</a>
       </div>
@@ -43,6 +44,15 @@
       document.getElementById('refresh').addEventListener('click', (e) => {
         e.preventDefault(); loadTree();
       });
+
+      // Back button to namespace view if ns is known
+      const backNs = document.getElementById('back-ns');
+      if (ns) {
+        backNs.href = `/namespace?ns=${encodeURIComponent(ns)}`;
+      } else {
+        // Fallback to history
+        backNs.addEventListener('click', (e) => { e.preventDefault(); history.back(); });
+      }
 
       function esc(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
 
