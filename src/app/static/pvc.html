@@ -59,6 +59,10 @@
         return `/api/namespaces/${encodeURIComponent(ns)}/pvcs/${encodeURIComponent(pvc)}/zip?path=${encodeURIComponent(path)}`;
       }
 
+      function dbDumpHref(){
+        return `/api/namespaces/${encodeURIComponent(ns)}/pvcs/${encodeURIComponent(pvc)}/db/dump`;
+      }
+
       function nodeDirTemplate(label, path){
         return `
           <details>
@@ -146,7 +150,32 @@
         await populateDir(rootUl, '.');
       }
 
+      async function loadDbInfo(){
+        if(!ns || !pvc) return;
+        const infoEl = document.getElementById('info');
+        try {
+          const res = await fetch(`/api/namespaces/${encodeURIComponent(ns)}/pvcs/${encodeURIComponent(pvc)}/db/detect`);
+          if(!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          if(data && data.isDatabase){
+            const eng = data.engine || 'db';
+            infoEl.innerHTML = `Detected database: <code>${eng}</code> in <code>${data.pod || ''}/${data.container || ''}</code>`;
+            const toolbar = document.querySelector('.toolbar');
+            const a = document.createElement('a');
+            a.className = 'button';
+            a.textContent = `DB Dump (${eng})`;
+            a.href = dbDumpHref();
+            toolbar.insertBefore(a, document.getElementById('refresh'));
+          } else {
+            infoEl.textContent = 'No database detected for this PVC.';
+          }
+        } catch (e) {
+          // Non-fatal
+        }
+      }
+
       init();
+      loadDbInfo();
     </script>
   </body>
   </html>

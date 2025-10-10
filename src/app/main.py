@@ -327,12 +327,13 @@ def stream_tar_from_pod(ns: str, pod_name: str) -> Iterator[bytes]:
         resp.close()
 
 
-def _exec_in_pod(ns: str, pod_name: str, command: list[str]) -> tuple[str, str]:
+def _exec_in_pod(ns: str, pod_name: str, command: list[str], container: str | None = None) -> tuple[str, str]:
     resp = k8s_stream(
         core.connect_get_namespaced_pod_exec,
         pod_name,
         ns,
         command=command,
+        container=container,
         stderr=True,
         stdin=False,
         stdout=True,
@@ -357,6 +358,193 @@ def _exec_in_pod(ns: str, pod_name: str, command: list[str]) -> tuple[str, str]:
     finally:
         resp.close()
     return ("".join(out_chunks), "".join(err_chunks))
+
+
+def _stream_exec(ns: str, pod_name: str, command: list[str], container: str | None = None) -> Iterator[bytes]:
+    resp = k8s_stream(
+        core.connect_get_namespaced_pod_exec,
+        pod_name,
+        ns,
+        command=command,
+        container=container,
+        stderr=True,
+        stdin=False,
+        stdout=True,
+        tty=False,
+        _preload_content=False,
+    )
+    try:
+        stderr_lines = 0
+        while resp.is_open():
+            resp.update(timeout=5)
+            if resp.peek_stdout():
+                chunk = resp.read_stdout()
+                if isinstance(chunk, str):
+                    chunk = chunk.encode()
+                if chunk:
+                    yield chunk
+            if resp.peek_stderr():
+                err = resp.read_stderr()
+                if err:
+                    estr = err if isinstance(err, str) else err.decode(errors="replace")
+                    if stderr_lines < 10:
+                        logger.info("DB dump exec stderr: %s", estr.strip())
+                        stderr_lines += 1
+    finally:
+        resp.close()
+
+
+def _pod_owner_kind_name(p: client.V1Pod) -> tuple[str | None, str | None]:
+    try:
+        owners = p.metadata.owner_references or []
+        for o in owners:
+            if o.controller:
+                return (o.kind, o.name)
+        if owners:
+            o = owners[0]
+            return (o.kind, o.name)
+    except Exception:
+        pass
+    return (None, None)
+
+
+def _pods_using_pvc(ns: str, pvc: str) -> List[client.V1Pod]:
+    pods = core.list_namespaced_pod(ns).items
+    out: List[client.V1Pod] = []
+    for p in pods:
+        try:
+            vols = p.spec.volumes or []
+            for v in vols:
+                pvc_src = getattr(v, "persistent_volume_claim", None)
+                if pvc_src and pvc_src.claim_name == pvc:
+                    out.append(p)
+                    break
+        except Exception:
+            continue
+    return out
+
+
+def _detect_engine_from_image(image: str) -> str | None:
+    x = (image or "").lower()
+    # Prefer explicit order: mariadb before mysql to avoid generic mysql match
+    if "mariadb" in x:
+        return "mariadb"
+    if "mysql" in x:
+        return "mysql"
+    if "postgres" in x or "postgresql" in x:
+        return "postgres"
+    return None
+
+
+def detect_db_for_pvc(ns: str, pvc: str) -> dict:
+    pods = _pods_using_pvc(ns, pvc)
+    # Prefer Running pods owned by StatefulSet/Deployment
+    def pod_rank(p: client.V1Pod) -> tuple[int, int]:
+        ph = (p.status and p.status.phase) or ""
+        running = 0 if ph == "Running" else 1
+        kind, _ = _pod_owner_kind_name(p)
+        owner_rank = 0 if kind in ("StatefulSet", "Deployment") else 1
+        return (running, owner_rank)
+
+    pods.sort(key=pod_rank)
+
+    for p in pods:
+        containers = (p.spec.containers or [])
+        for c in containers:
+            eng = _detect_engine_from_image(c.image or "")
+            if not eng:
+                continue
+            kind, owner_name = _pod_owner_kind_name(p)
+            return {
+                "isDatabase": True,
+                "engine": eng,
+                "pod": p.metadata.name,
+                "container": c.name,
+                "image": c.image,
+                "ownerKind": kind,
+                "ownerName": owner_name,
+                "phase": (p.status and p.status.phase) or None,
+                "namespace": ns,
+            }
+    return {"isDatabase": False, "engine": None}
+
+
+def _db_dump_shell_script(engine: str, compress: bool = True) -> str:
+    # Shell script executed inside the DB container to emit dump to stdout
+    if engine == "postgres":
+        script = r'''
+set -e
+USER="${POSTGRES_USER:-${POSTGRESQL_USERNAME:-${POSTGRESQL_USER:-postgres}}}"
+if [ -n "${POSTGRES_PASSWORD:-}" ]; then PASS="$POSTGRES_PASSWORD"; fi
+if [ -z "$PASS" ] && [ -n "${POSTGRESQL_PASSWORD:-}" ]; then PASS="$POSTGRESQL_PASSWORD"; fi
+if [ -z "$PASS" ] && [ -n "${PGPASSWORD:-}" ]; then PASS="$PGPASSWORD"; fi
+if [ -z "$PASS" ] && [ -f "${POSTGRES_PASSWORD_FILE:-}" ]; then PASS="$(cat "$POSTGRES_PASSWORD_FILE")"; fi
+if [ -z "$PASS" ] && [ -f "${POSTGRESQL_PASSWORD_FILE:-}" ]; then PASS="$(cat "$POSTGRESQL_PASSWORD_FILE")"; fi
+export PGPASSWORD="$PASS"
+BIN="$(command -v pg_dumpall || command -v /usr/bin/pg_dumpall || command -v /usr/local/bin/pg_dumpall || true)"
+if [ -z "$BIN" ]; then echo "__ERR__NO_PG_DUMPALL__" 1>&2; exit 127; fi
+CMD="$BIN -h 127.0.0.1 -U "$USER" --clean --if-exists --no-owner --no-privileges"
+if [ "''' + ("1" if compress else "0") + r'''" = "1" ]; then
+  sh -lc "$CMD" | gzip -c
+else
+  sh -lc "$CMD"
+fi
+'''
+        return script
+    if engine in ("mysql", "mariadb"):
+        script = r'''
+set -e
+USER="${MYSQL_USER:-${MARIADB_USER:-root}}"
+if [ -n "${MYSQL_ROOT_PASSWORD:-}" ]; then USER="root"; PASS="$MYSQL_ROOT_PASSWORD"; fi
+if [ -n "${MARIADB_ROOT_PASSWORD:-}" ]; then USER="root"; PASS="$MARIADB_ROOT_PASSWORD"; fi
+if [ -z "$PASS" ] && [ -n "${MYSQL_PASSWORD:-}" ]; then PASS="$MYSQL_PASSWORD"; fi
+if [ -z "$PASS" ] && [ -n "${MARIADB_PASSWORD:-}" ]; then PASS="$MARIADB_PASSWORD"; fi
+if [ -z "$PASS" ] && [ -f "${MYSQL_ROOT_PASSWORD_FILE:-}" ]; then USER="root"; PASS="$(cat "$MYSQL_ROOT_PASSWORD_FILE")"; fi
+if [ -z "$PASS" ] && [ -f "${MARIADB_ROOT_PASSWORD_FILE:-}" ]; then USER="root"; PASS="$(cat "$MARIADB_ROOT_PASSWORD_FILE")"; fi
+if [ -z "$PASS" ] && [ -f "${MYSQL_PASSWORD_FILE:-}" ]; then PASS="$(cat "$MYSQL_PASSWORD_FILE")"; fi
+if [ -z "$PASS" ] && [ -f "${MARIADB_PASSWORD_FILE:-}" ]; then PASS="$(cat "$MARIADB_PASSWORD_FILE")"; fi
+BIN="$(command -v mysqldump || command -v mariadb-dump || true)"
+if [ -z "$BIN" ]; then echo "__ERR__NO_MYSQLDUMP__" 1>&2; exit 127; fi
+EXTRA="--single-transaction --quick --lock-tables=false"
+if [ -n "$PASS" ]; then AUTH_OPTS="-u "$USER" -p$PASS"; else AUTH_OPTS="-u "$USER""; fi
+CMD="$BIN --all-databases $EXTRA -h 127.0.0.1 $AUTH_OPTS"
+if [ "''' + ("1" if compress else "0") + r'''" = "1" ]; then
+  sh -lc "$CMD" | gzip -c
+else
+  sh -lc "$CMD"
+fi
+'''
+        return script
+    raise ValueError(f"Unsupported engine: {engine}")
+
+
+@app.get("/api/namespaces/{ns}/pvcs/{pvc}/db/detect")
+def pvc_db_detect(ns: str, pvc: str):
+    info = detect_db_for_pvc(ns, pvc)
+    return info
+
+
+@app.get("/api/namespaces/{ns}/pvcs/{pvc}/db/dump")
+def pvc_db_dump(ns: str, pvc: str, engine: str | None = None, compress: bool = True, pod: str | None = None, container: str | None = None):
+    # Auto-detect if not provided
+    if not engine or not pod or not container:
+        det = detect_db_for_pvc(ns, pvc)
+        if not det.get("isDatabase"):
+            raise HTTPException(status_code=404, detail="No database pod detected for this PVC")
+        engine = engine or det.get("engine")
+        pod = pod or det.get("pod")
+        container = container or det.get("container")
+    engine = (engine or "").lower()
+    if engine not in ("postgres", "mysql", "mariadb"):
+        raise HTTPException(status_code=400, detail=f"Unsupported engine: {engine}")
+
+    logger.info("Starting DB dump: ns=%s pvc=%s pod=%s container=%s engine=%s compress=%s", ns, pvc, pod, container, engine, compress)
+    script = _db_dump_shell_script(engine, compress=compress)
+    cmd = ["/bin/sh", "-lc", script]
+    filename = f"{ns}-{pvc}-{engine}-dump.sql" + (".gz" if compress else "")
+    headers = {"Content-Disposition": f"attachment; filename={filename}"}
+    media_type = "application/gzip" if compress else "application/sql"
+    return StreamingResponse(_stream_exec(ns, pod, cmd, container=container), media_type=media_type, headers=headers)
 
 
 class _IteratorReader:
