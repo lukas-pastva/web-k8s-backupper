@@ -135,33 +135,113 @@ def to_yaml_docs(objs: List[dict]) -> str:
 
 
 @app.get("/api/namespaces/{ns}/manifests")
-def download_manifests(ns: str, includeSecrets: bool = True, download: bool = True):
+def download_manifests(
+    ns: str,
+    includeSecrets: bool = True,
+    download: bool = True,
+    revealSecrets: bool = False,
+    redactSecrets: bool = False,
+):
     docs: List[dict] = []
 
     # Core
-    docs += [o.to_dict() for o in core.list_namespaced_pod(ns).items]
-    docs += [o.to_dict() for o in core.list_namespaced_service(ns).items]
-    docs += [o.to_dict() for o in core.list_namespaced_config_map(ns).items]
+    try:
+        docs += [o.to_dict() for o in core.list_namespaced_pod(ns).items]
+    except Exception as e:
+        logger.warning("List pods failed: %s", e)
+    try:
+        docs += [o.to_dict() for o in core.list_namespaced_service(ns).items]
+    except Exception as e:
+        logger.warning("List services failed: %s", e)
+    try:
+        docs += [o.to_dict() for o in core.list_namespaced_config_map(ns).items]
+    except Exception as e:
+        logger.warning("List configmaps failed: %s", e)
     if includeSecrets:
-        docs += [o.to_dict() for o in core.list_namespaced_secret(ns).items]
-    docs += [o.to_dict() for o in core.list_namespaced_persistent_volume_claim(ns).items]
+        try:
+            docs += [o.to_dict() for o in core.list_namespaced_secret(ns).items]
+        except Exception as e:
+            logger.warning("List secrets failed: %s", e)
+    try:
+        docs += [o.to_dict() for o in core.list_namespaced_persistent_volume_claim(ns).items]
+    except Exception as e:
+        logger.warning("List pvcs failed: %s", e)
 
     # Apps
-    docs += [o.to_dict() for o in apps.list_namespaced_deployment(ns).items]
-    docs += [o.to_dict() for o in apps.list_namespaced_stateful_set(ns).items]
-    docs += [o.to_dict() for o in apps.list_namespaced_daemon_set(ns).items]
-    docs += [o.to_dict() for o in apps.list_namespaced_replica_set(ns).items]
+    try:
+        docs += [o.to_dict() for o in apps.list_namespaced_deployment(ns).items]
+    except Exception as e:
+        logger.warning("List deployments failed: %s", e)
+    try:
+        docs += [o.to_dict() for o in apps.list_namespaced_stateful_set(ns).items]
+    except Exception as e:
+        logger.warning("List statefulsets failed: %s", e)
+    try:
+        docs += [o.to_dict() for o in apps.list_namespaced_daemon_set(ns).items]
+    except Exception as e:
+        logger.warning("List daemonsets failed: %s", e)
+    try:
+        docs += [o.to_dict() for o in apps.list_namespaced_replica_set(ns).items]
+    except Exception as e:
+        logger.warning("List replicasets failed: %s", e)
 
     # Batch
-    docs += [o.to_dict() for o in batch.list_namespaced_job(ns).items]
-    docs += [o.to_dict() for o in batch.list_namespaced_cron_job(ns).items]
+    try:
+        docs += [o.to_dict() for o in batch.list_namespaced_job(ns).items]
+    except Exception as e:
+        logger.warning("List jobs failed: %s", e)
+    try:
+        docs += [o.to_dict() for o in batch.list_namespaced_cron_job(ns).items]
+    except Exception as e:
+        logger.warning("List cronjobs failed: %s", e)
 
     # Networking
-    docs += [o.to_dict() for o in networking.list_namespaced_ingress(ns).items]
+    try:
+        docs += [o.to_dict() for o in networking.list_namespaced_ingress(ns).items]
+    except Exception as e:
+        logger.warning("List ingresses failed: %s", e)
 
     # RBAC (namespaced)
-    docs += [o.to_dict() for o in rbac.list_namespaced_role(ns).items]
-    docs += [o.to_dict() for o in rbac.list_namespaced_role_binding(ns).items]
+    try:
+        docs += [o.to_dict() for o in rbac.list_namespaced_role(ns).items]
+    except Exception as e:
+        logger.warning("List roles failed: %s", e)
+    try:
+        docs += [o.to_dict() for o in rbac.list_namespaced_role_binding(ns).items]
+    except Exception as e:
+        logger.warning("List rolebindings failed: %s", e)
+
+    # Optionally transform Secret docs for readability/safety
+    if includeSecrets and (revealSecrets or redactSecrets):
+        for i, d in enumerate(docs):
+            try:
+                if (d.get("kind") or "").lower() == "secret":
+                    b64 = (d.get("data") or {})
+                    if revealSecrets:
+                        dec: dict[str, str] = {}
+                        for k, v in (b64.items() if isinstance(b64, dict) else []):
+                            try:
+                                s = v
+                                pad = (-len(s)) % 4
+                                if pad:
+                                    s = s + ("=" * pad)
+                                raw = base64.b64decode(s, validate=False)
+                                try:
+                                    dec[k] = raw.decode("utf-8")
+                                except Exception:
+                                    dec[k] = f"<binary {len(raw)} bytes>"
+                            except Exception:
+                                dec[k] = "<invalid base64>"
+                        d["dataDecoded"] = dec
+                    if redactSecrets:
+                        red: dict[str, str] = {}
+                        for k, v in (b64.items() if isinstance(b64, dict) else []):
+                            ln = len(v) if isinstance(v, str) else 0
+                            red[k] = f"<redacted {ln} chars>"
+                        d["data"] = red
+            except Exception:
+                # Non-fatal: keep original doc
+                continue
 
     content = to_yaml_docs(docs)
     filename = f"{ns}-manifests.yaml"

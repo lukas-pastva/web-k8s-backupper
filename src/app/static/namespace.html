@@ -41,12 +41,35 @@
 
       const dl = document.getElementById('dl-manifests');
       const view = document.getElementById('view-manifests');
+      // Controls
+      const controls = document.createElement('div');
+      controls.className = 'actions';
+      controls.style.marginLeft = '0';
+      controls.innerHTML = `
+        <label style="display:inline-flex;align-items:center;gap:6px;">
+          <input id="opt-inc-secrets" type="checkbox" checked /> Include secrets
+        </label>
+        <label style="display:inline-flex;align-items:center;gap:6px;">
+          <input id="opt-reveal-secrets" type="checkbox" /> Reveal secrets
+        </label>
+      `;
+      document.querySelector('header').insertBefore(controls, document.querySelector('header').children[2]);
+
       function updateManifestLinks() {
-        // Always include secrets
-        view.href = `/api/namespaces/${encodeURIComponent(ns)}/manifests?includeSecrets=true&download=false`;
-        dl.href = `/api/namespaces/${encodeURIComponent(ns)}/manifests?includeSecrets=true&download=true`;
+        const inc = document.getElementById('opt-inc-secrets').checked;
+        const rev = document.getElementById('opt-reveal-secrets').checked;
+        const base = `/api/namespaces/${encodeURIComponent(ns)}/manifests`;
+        const qs = new URLSearchParams({ includeSecrets: String(inc), revealSecrets: String(rev), download: 'false' });
+        const qs2 = new URLSearchParams({ includeSecrets: String(inc), revealSecrets: String(rev), download: 'true' });
+        view.href = `${base}?${qs.toString()}`;
+        dl.href = `${base}?${qs2.toString()}`;
       }
-  updateManifestLinks();
+      updateManifestLinks();
+      document.addEventListener('change', (e) => {
+        if (e.target && (e.target.id === 'opt-inc-secrets' || e.target.id === 'opt-reveal-secrets')) {
+          updateManifestLinks();
+        }
+      });
 
   function iconForKind(kind){
     const k = String(kind || '').toLowerCase();
