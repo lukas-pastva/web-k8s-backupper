@@ -45,12 +45,17 @@
         e.preventDefault(); loadTree();
       });
 
-      // Back button to namespace view if ns is known
+      // Back links
       const backNs = document.getElementById('back-ns');
+      const backAll = document.getElementById('back-all');
       if (ns) {
-        backNs.href = `/namespace?ns=${encodeURIComponent(ns)}`;
+        const nsUrl = `/namespace?ns=${encodeURIComponent(ns)}`;
+        backNs.href = nsUrl;
+        // Make the top-left back link go to namespace details when available.
+        backAll.href = nsUrl;
+        backAll.textContent = `← ${ns} namespace`;
       } else {
-        // Fallback to history
+        // Fallback to history for the toolbar Back, keep All namespaces on the left
         backNs.addEventListener('click', (e) => { e.preventDefault(); history.back(); });
       }
 
