@@ -68,7 +68,7 @@
           <details>
             <summary class="node"><span class="icon">📁</span><span>${label}</span>
               <span style="margin-left:auto"></span>
-              <a class="button sm" href="${zipHref(path)}" onclick="event.stopPropagation()">ZIP</a>
+              <a class="button sm" href="${zipHref(path)}" onclick="event.stopPropagation()">🗜️ ZIP</a>
             </summary>
             <ul><li class="node meta">Loading…</li></ul>
           </details>
@@ -81,8 +81,8 @@
         const meta = renderMeta(size, mtime);
         return `<li class="node"><span class="icon">📄</span><span>${label}</span> ${meta}
           <span style="margin-left:auto"></span>
-          <a class="button sm" href="${prev}" target="_blank">Preview</a>
-          <a class="button sm" href="${href}">Download</a>
+          <a class="button sm" href="${prev}" target="_blank">👁️ Preview</a>
+          <a class="button sm" href="${href}">⬇️ Download</a>
         </li>`;
       }
 
@@ -163,7 +163,7 @@
             const toolbar = document.querySelector('.toolbar');
             const a = document.createElement('a');
             a.className = 'button';
-            a.textContent = `DB Dump (${eng})`;
+            a.textContent = `🗄️ DB Dump (${eng})`;
             a.href = dbDumpHref();
             toolbar.insertBefore(a, document.getElementById('refresh'));
           } else {

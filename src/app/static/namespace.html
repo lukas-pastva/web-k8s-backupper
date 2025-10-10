@@ -33,8 +33,8 @@
         return u.searchParams.get(name);
       }
 
-      const ns = getParam('ns');
-      document.getElementById('ns-title').textContent = ns ? `Namespace: ${ns}` : 'Namespace';
+  const ns = getParam('ns');
+  document.getElementById('ns-title').textContent = ns ? `Namespace: ${ns}` : 'Namespace';
 
       const dl = document.getElementById('dl-manifests');
       const view = document.getElementById('view-manifests');
@@ -43,7 +43,25 @@
         view.href = `/api/namespaces/${encodeURIComponent(ns)}/manifests?includeSecrets=true&download=false`;
         dl.href = `/api/namespaces/${encodeURIComponent(ns)}/manifests?includeSecrets=true&download=true`;
       }
-      updateManifestLinks();
+  updateManifestLinks();
+
+  function iconForKind(kind){
+    const k = String(kind || '').toLowerCase();
+    if(k === 'pods') return '📦';
+    if(k === 'services') return '🌐';
+    if(k === 'configmaps') return '🧩';
+    if(k === 'secrets') return '🔑';
+    if(k === 'persistentvolumeclaims') return '💾';
+    if(k === 'deployments') return '🚀';
+    if(k === 'statefulsets') return '🧱';
+    if(k === 'daemonsets') return '🛡️';
+    if(k === 'jobs') return '🕒';
+    if(k === 'cronjobs') return '⏰';
+    if(k === 'ingresses') return '🧭';
+    if(k === 'roles') return '👤';
+    if(k === 'rolebindings') return '🤝';
+    return '📄';
+  }
 
       async function loadPVCs() {
         const el = document.getElementById('pvcs');
@@ -83,7 +101,7 @@
             <div class="panel">
               <div class="panel-title">${k}</div>
               <div class="panel-body panel-list">${(data[k]||[]).map(n => `
-                <a class="obj-item" href="#" data-kind="${k}" data-name="${n}">${n}</a>
+                <a class="obj-item" href="#" data-kind="${k}" data-name="${n}">${iconForKind(k)} ${n}</a>
               `).join('')}</div>
             </div>
           `).join('');
