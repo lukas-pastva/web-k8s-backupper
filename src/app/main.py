@@ -524,8 +524,33 @@ def pvc_db_detect(ns: str, pvc: str):
     return info
 
 
+def _zip_single_file_stream(inner_name: str, data_iter: Iterator[bytes]) -> Iterator[bytes]:
+    writer = _QueueWriter()
+
+    def worker():
+        try:
+            with zipfile.ZipFile(writer, mode="w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+                info = zipfile.ZipInfo(inner_name)
+                with zf.open(info, mode="w") as zf_file:
+                    for chunk in data_iter:
+                        if chunk:
+                            zf_file.write(chunk)
+        except Exception:
+            logger.exception("Error while building single-file ZIP stream")
+        finally:
+            try:
+                writer.close()
+            except Exception:
+                pass
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    for chunk in writer.reader():
+        yield chunk
+
+
 @app.get("/api/namespaces/{ns}/pvcs/{pvc}/db/dump")
-def pvc_db_dump(ns: str, pvc: str, engine: str | None = None, compress: bool = True, pod: str | None = None, container: str | None = None):
+def pvc_db_dump(ns: str, pvc: str, engine: str | None = None, compress: bool = True, format: str = "zip", pod: str | None = None, container: str | None = None):
     # Auto-detect if not provided
     if not engine or not pod or not container:
         det = detect_db_for_pvc(ns, pvc)
@@ -538,13 +563,44 @@ def pvc_db_dump(ns: str, pvc: str, engine: str | None = None, compress: bool = T
     if engine not in ("postgres", "mysql", "mariadb"):
         raise HTTPException(status_code=400, detail=f"Unsupported engine: {engine}")
 
-    logger.info("Starting DB dump: ns=%s pvc=%s pod=%s container=%s engine=%s compress=%s", ns, pvc, pod, container, engine, compress)
-    script = _db_dump_shell_script(engine, compress=compress)
+    fmt = (format or "").lower()
+    if fmt not in ("zip", "gz", "plain"):
+        raise HTTPException(status_code=400, detail="format must be one of: zip, gz, plain")
+    # For gz/plain, control gzip in the in-pod script; for zip, request plain and wrap here.
+    want_gzip = (fmt == "gz") or (fmt not in ("zip", "plain") and compress)
+
+    logger.info(
+        "Starting DB dump: ns=%s pvc=%s pod=%s container=%s engine=%s format=%s gzip_in_pod=%s",
+        ns, pvc, pod, container, engine, fmt, want_gzip,
+    )
+    script = _db_dump_shell_script(engine, compress=want_gzip)
     cmd = ["/bin/sh", "-lc", script]
-    filename = f"{ns}-{pvc}-{engine}-dump.sql" + (".gz" if compress else "")
-    headers = {"Content-Disposition": f"attachment; filename={filename}"}
-    media_type = "application/gzip" if compress else "application/sql"
-    return StreamingResponse(_stream_exec(ns, pod, cmd, container=container), media_type=media_type, headers=headers)
+
+    base = f"{ns}-{pvc}-{engine}-dump"
+    if fmt == "zip":
+        outer_name = f"{base}.zip"
+        inner_name = f"{base}.sql"
+        headers = {"Content-Disposition": f"attachment; filename={outer_name}"}
+        media_type = "application/zip"
+        return StreamingResponse(
+            _zip_single_file_stream(inner_name, _stream_exec(ns, pod, cmd, container=container)),
+            media_type=media_type,
+            headers=headers,
+        )
+    elif fmt == "gz":
+        filename = f"{base}.sql.gz"
+        headers = {"Content-Disposition": f"attachment; filename={filename}"}
+        media_type = "application/gzip"
+        return StreamingResponse(_stream_exec(ns, pod, cmd, container=container), media_type=media_type, headers=headers)
+    else:  # plain
+        # Ensure we requested plain text (no gzip) from pod
+        if want_gzip:
+            script = _db_dump_shell_script(engine, compress=False)
+            cmd = ["/bin/sh", "-lc", script]
+        filename = f"{base}.sql"
+        headers = {"Content-Disposition": f"attachment; filename={filename}"}
+        media_type = "application/sql"
+        return StreamingResponse(_stream_exec(ns, pod, cmd, container=container), media_type=media_type, headers=headers)
 
 
 class _IteratorReader:

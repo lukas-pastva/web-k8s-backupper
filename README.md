@@ -31,7 +31,8 @@ docker run --rm -p 8080:8080 -v $HOME/.kube:/root/.kube:ro web-k8s-backupper:dev
 Useful Endpoints
 ----------------
 - Detect DB: `GET /api/namespaces/{ns}/pvcs/{pvc}/db/detect`
-- Dump DB: `GET /api/namespaces/{ns}/pvcs/{pvc}/db/dump?compress=true`
+- Dump DB: `GET /api/namespaces/{ns}/pvcs/{pvc}/db/dump?format=zip` (default)
+  - Other formats: `format=gz` (streams `.sql.gz`) or `format=plain` (streams `.sql`).
 - ZIP path: `GET /api/namespaces/{ns}/pvcs/{pvc}/zip?path=.`
 
 How dumps work (aka: “trust fall”)
@@ -50,4 +51,3 @@ Safety-ish Notes
 Warranty
 --------
 - None. But if it works, you must say “wow, neat” at least once.
-

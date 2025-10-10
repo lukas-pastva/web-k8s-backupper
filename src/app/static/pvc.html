@@ -60,7 +60,7 @@
       }
 
       function dbDumpHref(){
-        return `/api/namespaces/${encodeURIComponent(ns)}/pvcs/${encodeURIComponent(pvc)}/db/dump`;
+        return `/api/namespaces/${encodeURIComponent(ns)}/pvcs/${encodeURIComponent(pvc)}/db/dump?format=zip`;
       }
 
       function nodeDirTemplate(label, path){
