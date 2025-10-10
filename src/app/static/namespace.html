@@ -164,11 +164,15 @@
         e.preventDefault();
         const kind = a.dataset.kind;
         const name = a.dataset.name;
-        const url = `/api/namespaces/${encodeURIComponent(ns)}/objects/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/manifest?download=false`;
+        const url = `/api/namespaces/${encodeURIComponent(ns)}/objects/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/manifest?download=false${kind==='secrets'?'&revealSecrets=true':''}`;
         try{
           const res = await fetch(url);
           const text = await res.text();
-          showModal(`${kind}/${name}`, text);
+          if(!res.ok){
+            showModal(`${kind}/${name}`, `HTTP ${res.status}\n\n${text}`);
+          } else {
+            showModal(`${kind}/${name}`, text);
+          }
         }catch(err){
           showModal(`${kind}/${name}`, `Failed to load manifest: ${err}`);
         }

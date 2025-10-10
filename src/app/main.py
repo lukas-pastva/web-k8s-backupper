@@ -17,6 +17,7 @@ from starlette.background import BackgroundTask
 from kubernetes import client, config
 from kubernetes.stream import stream as k8s_stream
 import yaml
+import base64
 
 
 def load_kube():
@@ -172,7 +173,7 @@ def download_manifests(ns: str, includeSecrets: bool = True, download: bool = Tr
 
 
 @app.get("/api/namespaces/{ns}/objects/{kind}/{name}/manifest")
-def get_object_manifest(ns: str, kind: str, name: str, download: bool = False):
+def get_object_manifest(ns: str, kind: str, name: str, download: bool = False, revealSecrets: bool = False, redactSecrets: bool = False):
     kind = kind.lower()
 
     # Map plural kinds to read functions
@@ -201,7 +202,38 @@ def get_object_manifest(ns: str, kind: str, name: str, download: bool = False):
         status = e.status or 500
         raise HTTPException(status_code=status, detail=e.reason)
 
-    content = to_yaml_docs([obj.to_dict()])
+    data = obj.to_dict()
+    if kind == "secrets":
+        # Optionally reveal or redact secret data for readability/safety
+        if revealSecrets:
+            b64 = data.get("data") or {}
+            decoded: dict[str, str] = {}
+            for k, v in b64.items():
+                try:
+                    # Friendly base64 decode that tolerates missing padding
+                    s = v
+                    pad = (-len(s)) % 4
+                    if pad:
+                        s = s + ("=" * pad)
+                    raw = base64.b64decode(s, validate=False)
+                    try:
+                        decoded[k] = raw.decode("utf-8")
+                    except Exception:
+                        # Non-text payload; represent as hex preview
+                        decoded[k] = f"<binary {len(raw)} bytes>"
+                except Exception:
+                    decoded[k] = "<invalid base64>"
+            # Keep original base64 data, add a helper field for readability
+            data["dataDecoded"] = decoded
+        elif redactSecrets:
+            b64 = data.get("data") or {}
+            red: dict[str, str] = {}
+            for k, v in b64.items():
+                ln = len(v) if isinstance(v, str) else 0
+                red[k] = f"<redacted {ln} chars>"
+            data["data"] = red
+
+    content = to_yaml_docs([data])
     headers = {}
     if download:
         filename = f"{ns}-{kind}-{name}.yaml"
