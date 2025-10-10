@@ -29,6 +29,7 @@ def load_kube():
 
 
 load_kube()
+api_client = client.ApiClient()
 core = client.CoreV1Api()
 apps = client.AppsV1Api()
 batch = client.BatchV1Api()
@@ -134,6 +135,47 @@ def to_yaml_docs(objs: List[dict]) -> str:
     return "---\n".join(parts)
 
 
+def _serialize_resource(
+    obj,
+    api_version_hint: str | None = None,
+    kind_hint: str | None = None,
+    reveal_secrets: bool = False,
+    redact_secrets: bool = False,
+):
+    """Convert a K8s model to a dict with proper apiVersion/kind and optional Secret transforms."""
+    d = api_client.sanitize_for_serialization(obj)
+    if api_version_hint and not d.get("apiVersion"):
+        d["apiVersion"] = api_version_hint
+    if kind_hint and not d.get("kind"):
+        d["kind"] = kind_hint
+    if (kind_hint == "Secret" or (d.get("kind") == "Secret")):
+        if reveal_secrets:
+            b64 = d.get("data") or {}
+            dec: dict[str, str] = {}
+            for k, v in (b64.items() if isinstance(b64, dict) else []):
+                try:
+                    s = v
+                    pad = (-len(s)) % 4
+                    if pad:
+                        s = s + ("=" * pad)
+                    raw = base64.b64decode(s, validate=False)
+                    try:
+                        dec[k] = raw.decode("utf-8")
+                    except Exception:
+                        dec[k] = f"<binary {len(raw)} bytes>"
+                except Exception:
+                    dec[k] = "<invalid base64>"
+            d["dataDecoded"] = dec
+        elif redact_secrets:
+            b64 = d.get("data") or {}
+            red: dict[str, str] = {}
+            for k, v in (b64.items() if isinstance(b64, dict) else []):
+                ln = len(v) if isinstance(v, str) else 0
+                red[k] = f"<redacted {ln} chars>"
+            d["data"] = red
+    return d
+
+
 @app.get("/api/namespaces/{ns}/manifests")
 def download_manifests(
     ns: str,
@@ -144,104 +186,78 @@ def download_manifests(
 ):
     docs: List[dict] = []
 
-    # Core
+    # Core v1
     try:
-        docs += [o.to_dict() for o in core.list_namespaced_pod(ns).items]
+        docs += [_serialize_resource(o, "v1", "Pod") for o in core.list_namespaced_pod(ns).items]
     except Exception as e:
         logger.warning("List pods failed: %s", e)
     try:
-        docs += [o.to_dict() for o in core.list_namespaced_service(ns).items]
+        docs += [_serialize_resource(o, "v1", "Service") for o in core.list_namespaced_service(ns).items]
     except Exception as e:
         logger.warning("List services failed: %s", e)
     try:
-        docs += [o.to_dict() for o in core.list_namespaced_config_map(ns).items]
+        docs += [_serialize_resource(o, "v1", "ConfigMap") for o in core.list_namespaced_config_map(ns).items]
     except Exception as e:
         logger.warning("List configmaps failed: %s", e)
     if includeSecrets:
         try:
-            docs += [o.to_dict() for o in core.list_namespaced_secret(ns).items]
+            docs += [
+                _serialize_resource(o, "v1", "Secret", reveal_secrets=revealSecrets, redact_secrets=redactSecrets)
+                for o in core.list_namespaced_secret(ns).items
+            ]
         except Exception as e:
             logger.warning("List secrets failed: %s", e)
     try:
-        docs += [o.to_dict() for o in core.list_namespaced_persistent_volume_claim(ns).items]
+        docs += [
+            _serialize_resource(o, "v1", "PersistentVolumeClaim")
+            for o in core.list_namespaced_persistent_volume_claim(ns).items
+        ]
     except Exception as e:
         logger.warning("List pvcs failed: %s", e)
 
-    # Apps
+    # Apps v1
     try:
-        docs += [o.to_dict() for o in apps.list_namespaced_deployment(ns).items]
+        docs += [_serialize_resource(o, "apps/v1", "Deployment") for o in apps.list_namespaced_deployment(ns).items]
     except Exception as e:
         logger.warning("List deployments failed: %s", e)
     try:
-        docs += [o.to_dict() for o in apps.list_namespaced_stateful_set(ns).items]
+        docs += [_serialize_resource(o, "apps/v1", "StatefulSet") for o in apps.list_namespaced_stateful_set(ns).items]
     except Exception as e:
         logger.warning("List statefulsets failed: %s", e)
     try:
-        docs += [o.to_dict() for o in apps.list_namespaced_daemon_set(ns).items]
+        docs += [_serialize_resource(o, "apps/v1", "DaemonSet") for o in apps.list_namespaced_daemon_set(ns).items]
     except Exception as e:
         logger.warning("List daemonsets failed: %s", e)
     try:
-        docs += [o.to_dict() for o in apps.list_namespaced_replica_set(ns).items]
+        docs += [_serialize_resource(o, "apps/v1", "ReplicaSet") for o in apps.list_namespaced_replica_set(ns).items]
     except Exception as e:
         logger.warning("List replicasets failed: %s", e)
 
-    # Batch
+    # Batch v1
     try:
-        docs += [o.to_dict() for o in batch.list_namespaced_job(ns).items]
+        docs += [_serialize_resource(o, "batch/v1", "Job") for o in batch.list_namespaced_job(ns).items]
     except Exception as e:
         logger.warning("List jobs failed: %s", e)
     try:
-        docs += [o.to_dict() for o in batch.list_namespaced_cron_job(ns).items]
+        docs += [_serialize_resource(o, "batch/v1", "CronJob") for o in batch.list_namespaced_cron_job(ns).items]
     except Exception as e:
         logger.warning("List cronjobs failed: %s", e)
 
-    # Networking
+    # Networking v1
     try:
-        docs += [o.to_dict() for o in networking.list_namespaced_ingress(ns).items]
+        docs += [_serialize_resource(o, "networking.k8s.io/v1", "Ingress") for o in networking.list_namespaced_ingress(ns).items]
     except Exception as e:
         logger.warning("List ingresses failed: %s", e)
 
-    # RBAC (namespaced)
+    # RBAC v1
     try:
-        docs += [o.to_dict() for o in rbac.list_namespaced_role(ns).items]
+        docs += [_serialize_resource(o, "rbac.authorization.k8s.io/v1", "Role") for o in rbac.list_namespaced_role(ns).items]
     except Exception as e:
         logger.warning("List roles failed: %s", e)
     try:
-        docs += [o.to_dict() for o in rbac.list_namespaced_role_binding(ns).items]
+        docs += [_serialize_resource(o, "rbac.authorization.k8s.io/v1", "RoleBinding") for o in rbac.list_namespaced_role_binding(ns).items]
     except Exception as e:
         logger.warning("List rolebindings failed: %s", e)
-
-    # Optionally transform Secret docs for readability/safety
-    if includeSecrets and (revealSecrets or redactSecrets):
-        for i, d in enumerate(docs):
-            try:
-                if (d.get("kind") or "").lower() == "secret":
-                    b64 = (d.get("data") or {})
-                    if revealSecrets:
-                        dec: dict[str, str] = {}
-                        for k, v in (b64.items() if isinstance(b64, dict) else []):
-                            try:
-                                s = v
-                                pad = (-len(s)) % 4
-                                if pad:
-                                    s = s + ("=" * pad)
-                                raw = base64.b64decode(s, validate=False)
-                                try:
-                                    dec[k] = raw.decode("utf-8")
-                                except Exception:
-                                    dec[k] = f"<binary {len(raw)} bytes>"
-                            except Exception:
-                                dec[k] = "<invalid base64>"
-                        d["dataDecoded"] = dec
-                    if redactSecrets:
-                        red: dict[str, str] = {}
-                        for k, v in (b64.items() if isinstance(b64, dict) else []):
-                            ln = len(v) if isinstance(v, str) else 0
-                            red[k] = f"<redacted {ln} chars>"
-                        d["data"] = red
-            except Exception:
-                # Non-fatal: keep original doc
-                continue
 
     content = to_yaml_docs(docs)
     filename = f"{ns}-manifests.yaml"
@@ -281,37 +297,31 @@ def get_object_manifest(ns: str, kind: str, name: str, download: bool = False, r
     except client.exceptions.ApiException as e:
         status = e.status or 500
         raise HTTPException(status_code=status, detail=e.reason)
+    # Determine apiVersion/kind hints for proper manifest keys
+    hints = {
+        "pods": ("v1", "Pod"),
+        "services": ("v1", "Service"),
+        "configmaps": ("v1", "ConfigMap"),
+        "secrets": ("v1", "Secret"),
+        "persistentvolumeclaims": ("v1", "PersistentVolumeClaim"),
+        "deployments": ("apps/v1", "Deployment"),
+        "statefulsets": ("apps/v1", "StatefulSet"),
+        "daemonsets": ("apps/v1", "DaemonSet"),
+        "jobs": ("batch/v1", "Job"),
+        "cronjobs": ("batch/v1", "CronJob"),
+        "ingresses": ("networking.k8s.io/v1", "Ingress"),
+        "roles": ("rbac.authorization.k8s.io/v1", "Role"),
+        "rolebindings": ("rbac.authorization.k8s.io/v1", "RoleBinding"),
+    }
+    api_ver_hint, kind_hint = hints.get(kind, (None, None))
 
-    data = obj.to_dict()
-    if kind == "secrets":
-        # Optionally reveal or redact secret data for readability/safety
-        if revealSecrets:
-            b64 = data.get("data") or {}
-            decoded: dict[str, str] = {}
-            for k, v in b64.items():
-                try:
-                    # Friendly base64 decode that tolerates missing padding
-                    s = v
-                    pad = (-len(s)) % 4
-                    if pad:
-                        s = s + ("=" * pad)
-                    raw = base64.b64decode(s, validate=False)
-                    try:
-                        decoded[k] = raw.decode("utf-8")
-                    except Exception:
-                        # Non-text payload; represent as hex preview
-                        decoded[k] = f"<binary {len(raw)} bytes>"
-                except Exception:
-                    decoded[k] = "<invalid base64>"
-            # Keep original base64 data, add a helper field for readability
-            data["dataDecoded"] = decoded
-        elif redactSecrets:
-            b64 = data.get("data") or {}
-            red: dict[str, str] = {}
-            for k, v in b64.items():
-                ln = len(v) if isinstance(v, str) else 0
-                red[k] = f"<redacted {ln} chars>"
-            data["data"] = red
+    data = _serialize_resource(
+        obj,
+        api_version_hint=api_ver_hint,
+        kind_hint=kind_hint,
+        reveal_secrets=revealSecrets if kind == "secrets" else False,
+        redact_secrets=redactSecrets if kind == "secrets" else False,
+    )
 
     content = to_yaml_docs([data])
     headers = {}
