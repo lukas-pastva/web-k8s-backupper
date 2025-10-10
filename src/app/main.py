@@ -438,7 +438,7 @@ class _QueueWriter:
             yield item
 
 
-def _tar_to_zip_stream(tar_stream: Iterator[bytes]) -> Iterator[bytes]:
+def _tar_to_zip_stream(tar_stream: Iterator[bytes], prefix: str = "") -> Iterator[bytes]:
     """
     Convert a (plain) tar byte-stream into a zip byte-stream on the fly.
     Uses a background thread to write into a queue-backed writer while the
@@ -469,11 +469,15 @@ def _tar_to_zip_stream(tar_stream: Iterator[bytes]) -> Iterator[bytes]:
                             name = name[1:]
                         if not name:
                             continue
+                        # Optional top-level prefix (e.g., namespace-pvc/ or basename(path)/)
+                        pfx = prefix
+                        if pfx and not pfx.endswith("/"):
+                            pfx += "/"
                         # Directories
                         if ti.isdir():
                             if not name.endswith("/"):
                                 name += "/"
-                            zinfo = zipfile.ZipInfo(filename=name)
+                            zinfo = zipfile.ZipInfo(filename=f"{pfx}{name}")
                             # Preserve basic permissions for dirs
                             perm = ti.mode if ti.mode else 0o755
                             zinfo.external_attr = (stat.S_IFDIR | perm) << 16
@@ -488,7 +492,7 @@ def _tar_to_zip_stream(tar_stream: Iterator[bytes]) -> Iterator[bytes]:
                             src = tf.extractfile(ti)
                             if src is None:
                                 continue
-                            zinfo = zipfile.ZipInfo(filename=name)
+                            zinfo = zipfile.ZipInfo(filename=f"{pfx}{name}")
                             perm = ti.mode if ti.mode else 0o644
                             zinfo.external_attr = (stat.S_IFREG | perm) << 16
                             with zf.open(zinfo, mode="w") as dest:
@@ -508,7 +512,7 @@ def _tar_to_zip_stream(tar_stream: Iterator[bytes]) -> Iterator[bytes]:
                         if ti.issym() or ti.islnk():
                             target = ti.linkname or ""
                             info = f"SYMLINK -> {target}\n".encode()
-                            zinfo = zipfile.ZipInfo(filename=name)
+                            zinfo = zipfile.ZipInfo(filename=f"{pfx}{name}")
                             zinfo.external_attr = (stat.S_IFLNK | 0o777) << 16
                             zf.writestr(zinfo, info)
                             count_links += 1
@@ -775,8 +779,12 @@ def _list_dir_entries(ns: str, pod_name: str, rel: str) -> List[Dict]:
     return entries
 
 
-def _zip_stream_via_walk(ns: str, pod_name: str, rel: str = ".") -> Iterator[bytes]:
-    """Create a zip by walking the directory with ls + cat, mirroring Browse."""
+def _zip_stream_via_walk(ns: str, pod_name: str, rel: str = ".", prefix: str = "") -> Iterator[bytes]:
+    """Create a zip by walking the directory with ls + cat, mirroring Browse.
+
+    When prefix is provided, all entries are placed under that top-level folder
+    inside the zip (e.g., "namespace-pvc/" or "basename(path)/").
+    """
     rel = _sanitize_rel_path(rel)
     writer = _QueueWriter()
 
@@ -790,7 +798,9 @@ def _zip_stream_via_walk(ns: str, pod_name: str, rel: str = ".") -> Iterator[byt
 
                 stack: List[str] = [rel]
                 visited = set()
-                base_prefix = "" if rel in ("", ".") else rel.rstrip("/") + "/"
+                pfx = prefix
+                if pfx and not pfx.endswith("/"):
+                    pfx += "/"
                 while stack:
                     cur = stack.pop()
                     if cur in visited:
@@ -805,7 +815,7 @@ def _zip_stream_via_walk(ns: str, pod_name: str, rel: str = ".") -> Iterator[byt
                     # Add directory entry itself (except root '.')
                     if cur not in ("", "."):
                         dname = cur if cur.endswith("/") else cur + "/"
-                        zinfo = zipfile.ZipInfo(filename=dname)
+                        zinfo = zipfile.ZipInfo(filename=f"{pfx}{dname}")
                         zinfo.external_attr = (stat.S_IFDIR | 0o755) << 16
                         try:
                             zf.writestr(zinfo, b"")
@@ -820,7 +830,7 @@ def _zip_stream_via_walk(ns: str, pod_name: str, rel: str = ".") -> Iterator[byt
                             stack.append(full)
                         elif typ == "file":
                             try:
-                                zinfo = zipfile.ZipInfo(filename=full)
+                                zinfo = zipfile.ZipInfo(filename=f"{pfx}{full}")
                                 zinfo.external_attr = (stat.S_IFREG | 0o644) << 16
                                 with zf.open(zinfo, mode="w") as dest:
                                     for chunk in stream_file_from_pod(ns, pod_name, full):
@@ -832,7 +842,7 @@ def _zip_stream_via_walk(ns: str, pod_name: str, rel: str = ".") -> Iterator[byt
                         elif typ == "link":
                             target_info = f"SYMLINK -> (target not resolved)\n".encode()
                             try:
-                                zinfo = zipfile.ZipInfo(filename=full)
+                                zinfo = zipfile.ZipInfo(filename=f"{pfx}{full}")
                                 zinfo.external_attr = (stat.S_IFLNK | 0o777) << 16
                                 zf.writestr(zinfo, target_info)
                                 count_links += 1
@@ -1006,7 +1016,7 @@ def pvc_zip_path(ns: str, pvc: str, path: str = "."):
             except Exception:
                 pass
         return StreamingResponse(
-            _zip_stream_via_walk(ns, pod_name, rel),
+            _zip_stream_via_walk(ns, pod_name, rel, prefix=base),
             media_type="application/zip",
             headers=headers,
             background=BackgroundTask(cleanup_walk),
@@ -1046,7 +1056,7 @@ def pvc_zip_path(ns: str, pvc: str, path: str = "."):
             pass
 
     return StreamingResponse(
-        _tar_to_zip_stream(tar_iter()),
+        _tar_to_zip_stream(tar_iter(), prefix=base),
         media_type="application/zip",
         headers=headers,
         background=BackgroundTask(cleanup),
@@ -1102,7 +1112,7 @@ def download_pvc(ns: str, pvc: str):
     # Depending on strategy, either walk or tar-stream
     if ARCHIVE_ZIP_MODE == "walk":
         return StreamingResponse(
-            _zip_stream_via_walk(ns, pod_name, "."),
+            _zip_stream_via_walk(ns, pod_name, ".", prefix=f"{ns}-{pvc}"),
             media_type="application/zip",
             headers=headers,
             background=BackgroundTask(cleanup),
@@ -1141,7 +1151,7 @@ def download_pvc(ns: str, pvc: str):
             logger.info("PVC tar stream closed: ns=%s pvc=%s bytes=%d", ns, pvc, bytes_read)
 
     return StreamingResponse(
-        _tar_to_zip_stream(tar_iter()),
+        _tar_to_zip_stream(tar_iter(), prefix=f"{ns}-{pvc}"),
         media_type="application/zip",
         headers=headers,
         background=BackgroundTask(cleanup),
