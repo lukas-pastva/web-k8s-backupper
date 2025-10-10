@@ -13,7 +13,6 @@
       <h1 id="ns-title"></h1>
       <div class="actions">
         <a href="#" class="button" data-role="theme-toggle">Theme</a>
-        <label><input type="checkbox" id="includeSecrets" /> Include Secrets</label>
         <a id="view-manifests" class="button" href="#" target="_blank">View Manifests</a>
         <a id="dl-manifests" class="button" href="#">Download Manifests</a>
       </div>
@@ -37,15 +36,13 @@
       const ns = getParam('ns');
       document.getElementById('ns-title').textContent = ns ? `Namespace: ${ns}` : 'Namespace';
 
-      const includeSecrets = document.getElementById('includeSecrets');
       const dl = document.getElementById('dl-manifests');
       const view = document.getElementById('view-manifests');
       function updateManifestLinks() {
-        const inc = includeSecrets.checked ? 'true' : 'false';
-        view.href = `/api/namespaces/${encodeURIComponent(ns)}/manifests?includeSecrets=${inc}&download=false`;
-        dl.href = `/api/namespaces/${encodeURIComponent(ns)}/manifests?includeSecrets=${inc}&download=true`;
+        // Always include secrets
+        view.href = `/api/namespaces/${encodeURIComponent(ns)}/manifests?includeSecrets=true&download=false`;
+        dl.href = `/api/namespaces/${encodeURIComponent(ns)}/manifests?includeSecrets=true&download=true`;
       }
-      includeSecrets.addEventListener('change', updateManifestLinks);
       updateManifestLinks();
 
       async function loadPVCs() {
@@ -86,7 +83,7 @@
             <div class="panel">
               <div class="panel-title">${k}</div>
               <div class="panel-body panel-list">${(data[k]||[]).map(n => `
-                <a class="obj-item" target="_blank" href="/api/namespaces/${encodeURIComponent(ns)}/objects/${encodeURIComponent(k)}/${encodeURIComponent(n)}/manifest?download=false">${n}</a>
+                <a class="obj-item" href="#" data-kind="${k}" data-name="${n}">${n}</a>
               `).join('')}</div>
             </div>
           `).join('');
@@ -94,6 +91,58 @@
           el.innerHTML = `<div class="error">Failed to load objects: ${e}</div>`;
         }
       }
+
+      // Modal for manifest preview
+      function createModal(){
+        const modal = document.createElement('div');
+        modal.id = 'manifest-modal';
+        modal.className = 'modal';
+        modal.hidden = true;
+        modal.innerHTML = `
+          <div class="box">
+            <div class="modal-header">
+              <div class="title">Manifest: <span id="manifest-title"></span></div>
+              <div class="toolbar">
+                <button class="button sm" id="copy-manifest">Copy</button>
+                <button class="button sm" id="close-manifest">Close</button>
+              </div>
+            </div>
+            <pre class="content" id="manifest-content"></pre>
+          </div>`;
+        document.body.appendChild(modal);
+        // Close on background click
+        modal.addEventListener('click', (e) => { if(e.target === modal) hideModal(); });
+        modal.querySelector('#close-manifest').addEventListener('click', hideModal);
+        modal.querySelector('#copy-manifest').addEventListener('click', () => {
+          const txt = document.getElementById('manifest-content').textContent;
+          navigator.clipboard.writeText(txt).catch(() => {});
+        });
+        return modal;
+      }
+      const modal = createModal();
+      function showModal(title, text){
+        document.getElementById('manifest-title').textContent = title;
+        document.getElementById('manifest-content').textContent = text;
+        modal.hidden = false;
+      }
+      function hideModal(){ modal.hidden = true; }
+
+      // Open object manifest in a popup instead of new tab
+      document.getElementById('objects').addEventListener('click', async (e) => {
+        const a = e.target.closest('.obj-item');
+        if(!a) return;
+        e.preventDefault();
+        const kind = a.dataset.kind;
+        const name = a.dataset.name;
+        const url = `/api/namespaces/${encodeURIComponent(ns)}/objects/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/manifest?download=false`;
+        try{
+          const res = await fetch(url);
+          const text = await res.text();
+          showModal(`${kind}/${name}`, text);
+        }catch(err){
+          showModal(`${kind}/${name}`, `Failed to load manifest: ${err}`);
+        }
+      });
 
       loadPVCs();
       loadObjects();

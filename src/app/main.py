@@ -134,7 +134,7 @@ def to_yaml_docs(objs: List[dict]) -> str:
 
 
 @app.get("/api/namespaces/{ns}/manifests")
-def download_manifests(ns: str, includeSecrets: bool = False, download: bool = True):
+def download_manifests(ns: str, includeSecrets: bool = True, download: bool = True):
     docs: List[dict] = []
 
     # Core
@@ -167,7 +167,8 @@ def download_manifests(ns: str, includeSecrets: bool = False, download: bool = T
     headers = {}
     if download:
         headers["Content-Disposition"] = f"attachment; filename={filename}"
-    return Response(content=content, media_type="application/x-yaml", headers=headers)
+    media_type = "application/x-yaml" if download else "text/plain; charset=utf-8"
+    return Response(content=content, media_type=media_type, headers=headers)
 
 
 @app.get("/api/namespaces/{ns}/objects/{kind}/{name}/manifest")
@@ -205,7 +206,8 @@ def get_object_manifest(ns: str, kind: str, name: str, download: bool = False):
     if download:
         filename = f"{ns}-{kind}-{name}.yaml"
         headers["Content-Disposition"] = f"attachment; filename={filename}"
-    return Response(content=content, media_type="application/x-yaml", headers=headers)
+    media_type = "application/x-yaml" if download else "text/plain; charset=utf-8"
+    return Response(content=content, media_type=media_type, headers=headers)
 
 
 def ensure_helper_pod(ns: str, pvc: str) -> str:

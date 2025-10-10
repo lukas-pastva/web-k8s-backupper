@@ -47,3 +47,10 @@ main{padding:20px;max-width:none;width:100%;margin:0}
 .obj-item:hover{border-color:var(--accent);color:var(--text)}
 .hint{color:var(--muted)}.error{color:#ff9aa2}
 code{background:var(--code-bg);border:1px solid var(--border);padding:2px 6px;border-radius:6px;color:var(--code-text)}
+
+/* Modal for manifest preview */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;padding:40px;z-index:1000}
+.modal .box{background:var(--panel);border:1px solid var(--border);border-radius:10px;max-width:min(1000px,90vw);width:100%;max-height:80vh;display:flex;flex-direction:column;overflow:hidden}
+.modal .modal-header{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:10px;border-bottom:1px solid var(--border)}
+.modal .modal-header .title{font-weight:600}
+.modal .content{margin:0;padding:12px;background:var(--code-bg);color:var(--code-text);overflow:auto;white-space:pre}
