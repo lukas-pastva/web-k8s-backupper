@@ -181,7 +181,7 @@ def download_manifests(
     ns: str,
     includeSecrets: bool = True,
     download: bool = True,
-    revealSecrets: bool = False,
+    revealSecrets: bool = True,
     redactSecrets: bool = False,
 ):
     docs: List[dict] = []
