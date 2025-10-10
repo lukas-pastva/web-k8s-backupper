@@ -18,10 +18,9 @@
   </head>
   <body>
     <header>
-      <a id="back-all" class="back" href="/">← All namespaces</a>
       <h1 id="title">PVC Browser</h1>
       <div class="toolbar">
-        <a id="back-ns" href="#" class="button">Back</a>
+        <a id="back-ns" href="#" class="button">Back to namespace</a>
         <a href="#" class="button" data-role="theme-toggle" title="Theme">🌓</a>
         <a id="refresh" href="#" class="button">Refresh</a>
       </div>
@@ -45,17 +44,12 @@
         e.preventDefault(); loadTree();
       });
 
-      // Back links
+      // Back button (right toolbar)
       const backNs = document.getElementById('back-ns');
-      const backAll = document.getElementById('back-all');
       if (ns) {
-        const nsUrl = `/namespace?ns=${encodeURIComponent(ns)}`;
-        backNs.href = nsUrl;
-        // Make the top-left back link go to namespace details when available.
-        backAll.href = nsUrl;
-        backAll.textContent = `← ${ns} namespace`;
+        backNs.href = `/namespace?ns=${encodeURIComponent(ns)}`;
       } else {
-        // Fallback to history for the toolbar Back, keep All namespaces on the left
+        // Fallback to history if ns not provided
         backNs.addEventListener('click', (e) => { e.preventDefault(); history.back(); });
       }
 
