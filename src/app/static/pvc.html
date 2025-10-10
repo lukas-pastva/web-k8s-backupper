@@ -160,12 +160,14 @@
           if(data && data.isDatabase){
             const eng = data.engine || 'db';
             infoEl.innerHTML = `Detected database: <code>${eng}</code> in <code>${data.pod || ''}/${data.container || ''}</code>`;
-            const toolbar = document.querySelector('.toolbar');
+            const refresh = document.getElementById('refresh');
             const a = document.createElement('a');
             a.className = 'button';
             a.textContent = `🗄️ DB Dump (${eng})`;
             a.href = dbDumpHref();
-            toolbar.insertBefore(a, document.getElementById('refresh'));
+            if (refresh && refresh.parentElement) {
+              refresh.insertAdjacentElement('afterend', a);
+            }
           } else {
             infoEl.textContent = 'No database detected for this PVC.';
           }

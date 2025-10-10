@@ -99,7 +99,7 @@
           }
           el.innerHTML = kinds.map(k => `
             <div class="panel">
-              <div class="panel-title">${k}</div>
+              <div class="panel-title">${iconForKind(k)} ${k}</div>
               <div class="panel-body panel-list">${(data[k]||[]).map(n => `
                 <a class="obj-item" href="#" data-kind="${k}" data-name="${n}">${iconForKind(k)} ${n}</a>
               `).join('')}</div>
