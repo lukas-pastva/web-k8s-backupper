@@ -455,7 +455,13 @@ def _tar_to_zip_stream(tar_stream: Iterator[bytes]) -> Iterator[bytes]:
                     total_in_bytes = 0
                     total_out_files = 0
                     for ti in tf:
-                        name = ti.name.lstrip("./")
+                        # Preserve leading dots in filenames; only strip a single
+                        # leading "./" or "/" that tar may include as a prefix.
+                        name = ti.name
+                        if name.startswith("./"):
+                            name = name[2:]
+                        elif name.startswith("/"):
+                            name = name[1:]
                         if not name:
                             continue
                         # Directories
@@ -616,7 +622,13 @@ def _build_tree_from_tar(ns: str, pod_name: str, rel_path: str = ".", max_nodes:
         with tarfile.open(fileobj=reader, mode="r|") as tf:
             for ti in tf:
                 total_entries += 1
-                rel = ti.name.lstrip("./")
+                # Preserve leading dots in filenames; only strip a single
+                # leading "./" or "/" that tar may include as a prefix.
+                rel = ti.name
+                if rel.startswith("./"):
+                    rel = rel[2:]
+                elif rel.startswith("/"):
+                    rel = rel[1:]
                 if not rel:
                     continue
                 parts = rel.split("/")
