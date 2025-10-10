@@ -9,12 +9,12 @@
   </head>
   <body>
     <header>
-      <a class="back" href="/">← All namespaces</a>
+      <a class="button" href="/">⬅ All namespaces</a>
       <h1 id="ns-title"></h1>
+      <a id="view-manifests" class="button" href="#" target="_blank">📄 View Manifests</a>
+      <a id="dl-manifests" class="button" href="#">⬇️ Download Manifests</a>
       <div class="actions">
-        <a href="#" class="button" data-role="theme-toggle">Theme</a>
-        <a id="view-manifests" class="button" href="#" target="_blank">View Manifests</a>
-        <a id="dl-manifests" class="button" href="#">Download Manifests</a>
+        <a href="#" class="button" data-role="theme-toggle">🌓 Theme</a>
       </div>
     </header>
     <main>
@@ -59,8 +59,8 @@
             <div class="card">
               <div class="title">${pvc.name}</div>
               <div class="desc">SC: ${pvc.storageClass || '-'} · Capacity: ${pvc.capacity || '-'} · Modes: ${(pvc.accessModes||[]).join(', ')}</div>
-              <a class="button" href="/api/namespaces/${encodeURIComponent(ns)}/pvcs/${encodeURIComponent(pvc.name)}/download">Download PVC</a>
-              <a class="button" href="/pvc?ns=${encodeURIComponent(ns)}&pvc=${encodeURIComponent(pvc.name)}">Browse</a>
+              <a class="button" href="/api/namespaces/${encodeURIComponent(ns)}/pvcs/${encodeURIComponent(pvc.name)}/download">⬇️ Download PVC</a>
+              <a class="button" href="/pvc?ns=${encodeURIComponent(ns)}&pvc=${encodeURIComponent(pvc.name)}">📂 Browse</a>
             </div>
           `).join('');
         } catch (e) {
