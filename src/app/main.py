@@ -53,6 +53,10 @@ if not logger.handlers:
     h.setFormatter(fmt)
     logger.addHandler(h)
 ARCHIVE_DEBUG = os.environ.get("ARCHIVE_DEBUG", "0") in ("1", "true", "True")
+# Zip strategy: 'tar' (stream tar -> zip) or 'walk' (enumerate via ls + cat)
+ARCHIVE_ZIP_MODE = os.environ.get("ARCHIVE_ZIP_MODE", "tar").strip().lower()
+ARCHIVE_TAR_VERBOSE = os.environ.get("ARCHIVE_TAR_VERBOSE", "0") in ("1", "true", "True")
+
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -262,11 +266,11 @@ def _exec_tar_stream(ns: str, pod_name: str, gzip: bool = False):
     Returns the Kubernetes stream response object which exposes read methods and lifecycle.
     """
     cmd = ["tar"]
-    if gzip:
-        cmd += ["czf", "-"]
-    else:
-        cmd += ["cf", "-"]
+    flags = "c" + ("z" if gzip else "") + ("v" if ARCHIVE_TAR_VERBOSE else "") + "f"
+    cmd += [flags, "-"]
     cmd += ["-C", "/data", "."]
+    if ARCHIVE_DEBUG:
+        logger.info("Exec tar stream cmd: %s", " ".join(cmd))
     resp = k8s_stream(
         core.connect_get_namespaced_pod_exec,
         pod_name,
@@ -285,11 +289,11 @@ def _exec_tar_stream_path(ns: str, pod_name: str, rel_path: str, gzip: bool = Fa
     """Start a tar stream for a specific relative path under /data."""
     rel_path = _sanitize_rel_path(rel_path)
     cmd = ["tar"]
-    if gzip:
-        cmd += ["czf", "-"]
-    else:
-        cmd += ["cf", "-"]
+    flags = "c" + ("z" if gzip else "") + ("v" if ARCHIVE_TAR_VERBOSE else "") + "f"
+    cmd += [flags, "-"]
     cmd += ["-C", "/data", rel_path]
+    if ARCHIVE_DEBUG:
+        logger.info("Exec tar stream path cmd: %s", " ".join(cmd))
     resp = k8s_stream(
         core.connect_get_namespaced_pod_exec,
         pod_name,
@@ -452,6 +456,7 @@ def _tar_to_zip_stream(tar_stream: Iterator[bytes]) -> Iterator[bytes]:
                     count_files = 0
                     count_dirs = 0
                     count_links = 0
+                    count_other = 0
                     total_in_bytes = 0
                     total_out_files = 0
                     for ti in tf:
@@ -512,9 +517,10 @@ def _tar_to_zip_stream(tar_stream: Iterator[bytes]) -> Iterator[bytes]:
                             continue
 
                         # Fallback: skip unknown types
+                        count_other += 1
                     logger.info(
-                        "ZIP stream complete: files=%d dirs=%d links=%d bytes_in≈%d",
-                        count_files, count_dirs, count_links, total_in_bytes,
+                        "ZIP stream complete: files=%d dirs=%d links=%d other=%d bytes_in≈%d",
+                        count_files, count_dirs, count_links, count_other, total_in_bytes,
                     )
         except Exception:
             logger.exception("Error while converting tar->zip stream")
@@ -578,6 +584,7 @@ def _build_tree_from_tar(ns: str, pod_name: str, rel_path: str = ".", max_nodes:
 
     def tar_iter() -> Iterator[bytes]:
         nonlocal bytes_read
+        stderr_lines = 0
         try:
             while resp.is_open():
                 resp.update(timeout=5)
@@ -592,7 +599,9 @@ def _build_tree_from_tar(ns: str, pod_name: str, rel_path: str = ".", max_nodes:
                     err = resp.read_stderr()
                     if err:
                         estr = err if isinstance(err, str) else err.decode(errors="replace")
-                        logger.debug("PVC tar(tree) stderr: %s", estr.strip())
+                        if ARCHIVE_DEBUG and stderr_lines < 20:
+                            logger.debug("PVC tar(tree) stderr: %s", estr.strip())
+                            stderr_lines += 1
         finally:
             resp.close()
 
@@ -691,6 +700,159 @@ def _build_tree_from_tar(ns: str, pod_name: str, rel_path: str = ".", max_nodes:
 
     tree = {"name": "/", "type": "dir", "children": to_list(root)}
     return {"root": tree, "truncated": truncated}
+
+
+def _log_helper_pod_env(ns: str, pod_name: str):
+    """Best-effort logging of environment in the helper pod for diagnostics."""
+    try:
+        script = (
+            "set -e; "
+            "echo '--- helper env ---'; "
+            "id; uname -a; echo SHELL=$SHELL; echo PATH=$PATH; "
+            "(tar --version 2>&1 || true) | sed -n '1,2p'; "
+            "(busybox 2>&1 || true) | sed -n '1,1p'; "
+            "echo '--- /data top (first 50) ---'; cd /data && ls -la | sed -n '1,50p'"
+        )
+        out, err = _exec_in_pod(ns, pod_name, ["/bin/sh", "-lc", script])
+        msg = out.strip()
+        if msg:
+            logger.info("Helper pod env:\n%s", msg)
+        if err and ARCHIVE_DEBUG:
+            logger.debug("Helper pod env stderr: %s", err.strip())
+    except Exception:
+        logger.exception("Failed to log helper pod env")
+
+
+def _list_dir_entries(ns: str, pod_name: str, rel: str) -> List[Dict]:
+    """List entries in a directory using the same logic as pvc_ls, returns list of dicts."""
+    rel = _sanitize_rel_path(rel)
+    script = f"""
+        set -e
+        cd /data
+        p={sh_quote(rel)}
+        if [ ! -e "$p" ]; then echo "__ERR__NOT_FOUND"; exit 2; fi
+        if [ -d "$p" ]; then
+          for f in "$p"/* "$p"/.[!.]* "$p"/..?*; do
+            [ -e "$f" ] || continue
+            name="${{f#"$p"/}}"
+            if [ -d "$f" ]; then type=dir; elif [ -L "$f" ]; then type=link; else type=file; fi
+            size=$(stat -c %s -- "$f" 2>/dev/null || wc -c < "$f" 2>/dev/null || echo 0)
+            mtime=$(stat -c %Y -- "$f" 2>/dev/null || date +%s)
+            printf '%s|%s|%s|%s\n' "$type" "$size" "$mtime" "$name"
+          done
+        else
+          f="$p"
+          name=$(basename -- "$f")
+          if [ -d "$f" ]; then type=dir; elif [ -L "$f" ]; then type=link; else type=file; fi
+          size=$(stat -c %s -- "$f" 2>/dev/null || wc -c < "$f" 2>/dev/null || echo 0)
+          mtime=$(stat -c %Y -- "$f" 2>/dev/null || date +%s)
+          printf '%s|%s|%s|%s\n' "$type" "$size" "$mtime" "$name"
+        fi
+    """
+    out, err = _exec_in_pod(ns, pod_name, ["/bin/sh", "-lc", script])
+    if "__ERR__NOT_FOUND" in out:
+        raise HTTPException(status_code=404, detail="Path not found")
+    entries: List[Dict] = []
+    for line in out.splitlines():
+        if not line:
+            continue
+        parts = line.split("|", 3)
+        if len(parts) != 4:
+            continue
+        typ, size, mtime, name = parts
+        try:
+            size_i = int(size)
+        except Exception:
+            size_i = 0
+        try:
+            mtime_i = int(mtime)
+        except Exception:
+            mtime_i = 0
+        entries.append({"type": typ, "size": size_i, "mtime": mtime_i, "name": name})
+    # Sort similar to UI: dirs first then files then links
+    order = {"dir": 0, "file": 1, "link": 2}
+    entries.sort(key=lambda x: (order.get(x.get("type"), 9), x.get("name", "")))
+    return entries
+
+
+def _zip_stream_via_walk(ns: str, pod_name: str, rel: str = ".") -> Iterator[bytes]:
+    """Create a zip by walking the directory with ls + cat, mirroring Browse."""
+    rel = _sanitize_rel_path(rel)
+    writer = _QueueWriter()
+
+    def worker():
+        try:
+            with zipfile.ZipFile(writer, mode="w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+                count_files = 0
+                count_dirs = 0
+                count_links = 0
+                had_error = False
+
+                stack: List[str] = [rel]
+                visited = set()
+                base_prefix = "" if rel in ("", ".") else rel.rstrip("/") + "/"
+                while stack:
+                    cur = stack.pop()
+                    if cur in visited:
+                        continue
+                    visited.add(cur)
+                    try:
+                        entries = _list_dir_entries(ns, pod_name, cur)
+                    except Exception:
+                        logger.exception("Walk: failed to list %s", cur)
+                        had_error = True
+                        continue
+                    # Add directory entry itself (except root '.')
+                    if cur not in ("", "."):
+                        dname = cur if cur.endswith("/") else cur + "/"
+                        zinfo = zipfile.ZipInfo(filename=dname)
+                        zinfo.external_attr = (stat.S_IFDIR | 0o755) << 16
+                        try:
+                            zf.writestr(zinfo, b"")
+                            count_dirs += 1
+                        except Exception:
+                            logger.exception("Walk: failed to add dir %s", dname)
+                    for e in entries:
+                        name = e.get("name", "")
+                        typ = e.get("type", "")
+                        full = name if cur in ("", ".") else f"{cur}/{name}"
+                        if typ == "dir":
+                            stack.append(full)
+                        elif typ == "file":
+                            try:
+                                zinfo = zipfile.ZipInfo(filename=full)
+                                zinfo.external_attr = (stat.S_IFREG | 0o644) << 16
+                                with zf.open(zinfo, mode="w") as dest:
+                                    for chunk in stream_file_from_pod(ns, pod_name, full):
+                                        dest.write(chunk)
+                                count_files += 1
+                            except Exception:
+                                logger.exception("Walk: failed to add file %s", full)
+                                had_error = True
+                        elif typ == "link":
+                            target_info = f"SYMLINK -> (target not resolved)\n".encode()
+                            try:
+                                zinfo = zipfile.ZipInfo(filename=full)
+                                zinfo.external_attr = (stat.S_IFLNK | 0o777) << 16
+                                zf.writestr(zinfo, target_info)
+                                count_links += 1
+                            except Exception:
+                                logger.exception("Walk: failed to add link %s", full)
+                                had_error = True
+                logger.info(
+                    "ZIP walk complete: files=%d dirs=%d links=%d errors=%s",
+                    count_files, count_dirs, count_links, had_error,
+                )
+        finally:
+            try:
+                writer.close()
+            except Exception:
+                pass
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    for chunk in writer.reader():
+        yield chunk
 
 
 @app.get("/api/namespaces/{ns}/pvcs/{pvc}/tree")
@@ -834,11 +996,27 @@ def pvc_zip_path(ns: str, pvc: str, path: str = "."):
     filename = f"{base}.zip"
     headers = {"Content-Disposition": f"attachment; filename={filename}"}
 
-    logger.info("Starting PVC zip for path: ns=%s pvc=%s path=%s pod=%s", ns, pvc, rel, pod_name)
+    logger.info("Starting PVC zip for path: ns=%s pvc=%s path=%s pod=%s mode=%s", ns, pvc, rel, pod_name, ARCHIVE_ZIP_MODE)
+    if ARCHIVE_DEBUG:
+        _log_helper_pod_env(ns, pod_name)
+    if ARCHIVE_ZIP_MODE == "walk":
+        def cleanup_walk():
+            try:
+                core.delete_namespaced_pod(name=pod_name, namespace=ns, grace_period_seconds=0)
+            except Exception:
+                pass
+        return StreamingResponse(
+            _zip_stream_via_walk(ns, pod_name, rel),
+            media_type="application/zip",
+            headers=headers,
+            background=BackgroundTask(cleanup_walk),
+        )
+
     resp = _exec_tar_stream_path(ns, pod_name, rel, gzip=False)
 
     def tar_iter() -> Iterator[bytes]:
         bytes_read = 0
+        stderr_lines = 0
         try:
             while resp.is_open():
                 resp.update(timeout=5)
@@ -851,9 +1029,12 @@ def pvc_zip_path(ns: str, pvc: str, path: str = "."):
                         yield chunk
                 if resp.peek_stderr():
                     err = resp.read_stderr()
-                    if err and ARCHIVE_DEBUG:
+                    if err:
                         estr = err if isinstance(err, str) else err.decode(errors="replace")
-                        logger.debug("PVC tar(zip path) stderr: %s", estr.strip())
+                        # Log a few lines at INFO for diagnostics
+                        if stderr_lines < 10:
+                            logger.info("PVC tar(zip path) stderr: %s", estr.strip())
+                            stderr_lines += 1
         finally:
             resp.close()
             logger.info("PVC tar(zip path) stream closed: ns=%s pvc=%s path=%s bytes=%d", ns, pvc, rel, bytes_read)
@@ -907,20 +1088,33 @@ def download_pvc(ns: str, pvc: str):
 
     # Log effective reader context
     logger.info(
-        "Starting PVC download: ns=%s pvc=%s pod=%s format=zip READER_UID=%s READER_GID=%s READONLY=%s",
+        "Starting PVC download: ns=%s pvc=%s pod=%s format=zip READER_UID=%s READER_GID=%s READONLY=%s mode=%s",
         ns,
         pvc,
         pod_name,
         os.environ.get("READER_UID", "0"),
         os.environ.get("READER_GID", "0"),
         os.environ.get("READER_READONLY", "1"),
+        ARCHIVE_ZIP_MODE,
     )
+    if ARCHIVE_DEBUG:
+        _log_helper_pod_env(ns, pod_name)
+    # Depending on strategy, either walk or tar-stream
+    if ARCHIVE_ZIP_MODE == "walk":
+        return StreamingResponse(
+            _zip_stream_via_walk(ns, pod_name, "."),
+            media_type="application/zip",
+            headers=headers,
+            background=BackgroundTask(cleanup),
+        )
+
     # Create a plain tar stream from the pod and transcode to zip on the fly
     resp = _exec_tar_stream(ns, pod_name, gzip=False)
 
     def tar_iter() -> Iterator[bytes]:
         bytes_read = 0
         last_log = 0
+        stderr_lines = 0
         try:
             while resp.is_open():
                 resp.update(timeout=5)
@@ -937,12 +1131,11 @@ def download_pvc(ns: str, pvc: str):
                 if resp.peek_stderr():
                     err = resp.read_stderr()
                     if err:
-                        # Always surface likely permission or access errors
+                        # Surface stderr lines for diagnostics, limited to first 10
                         estr = err if isinstance(err, str) else err.decode(errors="replace")
-                        if any(k in estr for k in ["Permission denied", "permission denied", "Operation not permitted", "No such file or directory"]):
-                            logger.warning("PVC tar stderr: %s", estr.strip())
-                        elif ARCHIVE_DEBUG:
-                            logger.debug("PVC tar stderr: %s", estr.strip())
+                        if stderr_lines < 10:
+                            logger.info("PVC tar(stderr): %s", estr.strip())
+                            stderr_lines += 1
         finally:
             resp.close()
             logger.info("PVC tar stream closed: ns=%s pvc=%s bytes=%d", ns, pvc, bytes_read)
