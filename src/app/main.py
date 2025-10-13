@@ -597,16 +597,20 @@ def _db_dump_shell_script(engine: str, compress: bool = True) -> str:
         script = r'''
 set -e
 USER="${POSTGRES_USER:-${POSTGRESQL_USERNAME:-${POSTGRESQL_USER:-postgres}}}"
-if [ -n "${POSTGRES_PASSWORD:-}" ]; then PASS="$POSTGRES_PASSWORD"; fi
+# Prefer superuser password if available (Bitnami charts)
+if [ -n "${POSTGRESQL_POSTGRES_PASSWORD:-}" ]; then PASS="$POSTGRESQL_POSTGRES_PASSWORD"; PASS_IS_SU=1; fi
+if [ -z "$PASS" ] && [ -n "${POSTGRES_POSTGRES_PASSWORD:-}" ]; then PASS="$POSTGRES_POSTGRES_PASSWORD"; PASS_IS_SU=1; fi
+# Then regular user passwords
+if [ -z "$PASS" ] && [ -n "${POSTGRES_PASSWORD:-}" ]; then PASS="$POSTGRES_PASSWORD"; fi
 if [ -z "$PASS" ] && [ -n "${POSTGRESQL_PASSWORD:-}" ]; then PASS="$POSTGRESQL_PASSWORD"; fi
-# Some images (e.g., Bitnami) expose the postgres superuser password via this var
-if [ -z "$PASS" ] && [ -n "${POSTGRESQL_POSTGRES_PASSWORD:-}" ]; then PASS="$POSTGRESQL_POSTGRES_PASSWORD"; fi
-# Handle occasionally seen variant
-if [ -z "$PASS" ] && [ -n "${POSTGRES_POSTGRES_PASSWORD:-}" ]; then PASS="$POSTGRES_POSTGRES_PASSWORD"; fi
 if [ -z "$PASS" ] && [ -n "${PGPASSWORD:-}" ]; then PASS="$PGPASSWORD"; fi
+if [ -z "$PASS" ] && [ -f "${POSTGRESQL_POSTGRES_PASSWORD_FILE:-}" ]; then PASS="$(cat "$POSTGRESQL_POSTGRES_PASSWORD_FILE")"; PASS_IS_SU=1; fi
+if [ -z "$PASS" ] && [ -f "${POSTGRES_POSTGRES_PASSWORD_FILE:-}" ]; then PASS="$(cat "$POSTGRES_POSTGRES_PASSWORD_FILE")"; PASS_IS_SU=1; fi
 if [ -z "$PASS" ] && [ -f "${POSTGRES_PASSWORD_FILE:-}" ]; then PASS="$(cat "$POSTGRES_PASSWORD_FILE")"; fi
 if [ -z "$PASS" ] && [ -f "${POSTGRESQL_PASSWORD_FILE:-}" ]; then PASS="$(cat "$POSTGRESQL_PASSWORD_FILE")"; fi
-if [ -z "$PASS" ] && [ -f "${POSTGRESQL_POSTGRES_PASSWORD_FILE:-}" ]; then PASS="$(cat "$POSTGRESQL_POSTGRES_PASSWORD_FILE")"; fi
+
+# If we detected superuser password, force user to postgres
+if [ "${PASS_IS_SU:-0}" = "1" ]; then USER="postgres"; fi
 export PGPASSWORD="$PASS"
 
 # Locate pg_dumpall across common distro paths
@@ -629,7 +633,7 @@ if [ -z "$BIN" ]; then
   done
 fi
 if [ -z "$BIN" ]; then echo "__ERR__NO_PG_DUMPALL__" 1>&2; exit 127; fi
-CMD="$BIN -h 127.0.0.1 -U "$USER" --clean --if-exists --no-owner --no-privileges"
+CMD="$BIN -h 127.0.0.1 -U "$USER" --clean --if-exists --no-owner --no-privileges --no-role-passwords"
 if [ "''' + ("1" if compress else "0") + r'''" = "1" ]; then
   sh -lc "$CMD" | gzip -c
 else
