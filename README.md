@@ -42,6 +42,19 @@ How dumps work (aka: “trust fall”)
   - MySQL/MariaDB: `mysqldump --all-databases --single-transaction`
 - Credentials are sourced from common env vars or `*_FILE` secrets if present.
 - If the image has no client binaries, the dump will (comedically) fail. Bring tools.
+  - Postgres binary lookup also checks common distro paths like
+    `/opt/bitnami/postgresql/bin/pg_dumpall`, `/usr/lib/postgresql/<ver>/bin/pg_dumpall`,
+    and `/usr/pgsql-*/bin/pg_dumpall`.
+
+Postgres auth env vars we recognize
+-----------------------------------
+- `POSTGRES_PASSWORD`, `POSTGRESQL_PASSWORD`, `PGPASSWORD`
+- Superuser variants: `POSTGRESQL_POSTGRES_PASSWORD`, `POSTGRES_POSTGRES_PASSWORD`
+- Secret-file variants: `POSTGRES_PASSWORD_FILE`, `POSTGRESQL_PASSWORD_FILE`,
+  `POSTGRESQL_POSTGRES_PASSWORD_FILE`
+
+Note: We use `pg_dumpall` against `127.0.0.1` with `-U $USER`. The user is picked from
+`POSTGRES_USER`, `POSTGRESQL_USERNAME`, or `POSTGRESQL_USER` (default: `postgres`).
 
 Safety-ish Notes
 ----------------

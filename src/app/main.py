@@ -599,11 +599,35 @@ set -e
 USER="${POSTGRES_USER:-${POSTGRESQL_USERNAME:-${POSTGRESQL_USER:-postgres}}}"
 if [ -n "${POSTGRES_PASSWORD:-}" ]; then PASS="$POSTGRES_PASSWORD"; fi
 if [ -z "$PASS" ] && [ -n "${POSTGRESQL_PASSWORD:-}" ]; then PASS="$POSTGRESQL_PASSWORD"; fi
+# Some images (e.g., Bitnami) expose the postgres superuser password via this var
+if [ -z "$PASS" ] && [ -n "${POSTGRESQL_POSTGRES_PASSWORD:-}" ]; then PASS="$POSTGRESQL_POSTGRES_PASSWORD"; fi
+# Handle occasionally seen variant
+if [ -z "$PASS" ] && [ -n "${POSTGRES_POSTGRES_PASSWORD:-}" ]; then PASS="$POSTGRES_POSTGRES_PASSWORD"; fi
 if [ -z "$PASS" ] && [ -n "${PGPASSWORD:-}" ]; then PASS="$PGPASSWORD"; fi
 if [ -z "$PASS" ] && [ -f "${POSTGRES_PASSWORD_FILE:-}" ]; then PASS="$(cat "$POSTGRES_PASSWORD_FILE")"; fi
 if [ -z "$PASS" ] && [ -f "${POSTGRESQL_PASSWORD_FILE:-}" ]; then PASS="$(cat "$POSTGRESQL_PASSWORD_FILE")"; fi
+if [ -z "$PASS" ] && [ -f "${POSTGRESQL_POSTGRES_PASSWORD_FILE:-}" ]; then PASS="$(cat "$POSTGRESQL_POSTGRES_PASSWORD_FILE")"; fi
 export PGPASSWORD="$PASS"
-BIN="$(command -v pg_dumpall || command -v /usr/bin/pg_dumpall || command -v /usr/local/bin/pg_dumpall || true)"
+
+# Locate pg_dumpall across common distro paths
+BIN=""
+if command -v pg_dumpall >/dev/null 2>&1; then BIN="$(command -v pg_dumpall)"; fi
+if [ -z "$BIN" ] && [ -x "/usr/bin/pg_dumpall" ]; then BIN="/usr/bin/pg_dumpall"; fi
+if [ -z "$BIN" ] && [ -x "/usr/local/bin/pg_dumpall" ]; then BIN="/usr/local/bin/pg_dumpall"; fi
+# Bitnami image path
+if [ -z "$BIN" ] && [ -x "/opt/bitnami/postgresql/bin/pg_dumpall" ]; then BIN="/opt/bitnami/postgresql/bin/pg_dumpall"; fi
+# Debian/Ubuntu packaged locations: /usr/lib/postgresql/<ver>/bin/pg_dumpall
+if [ -z "$BIN" ]; then
+  for p in /usr/lib/postgresql/*/bin/pg_dumpall; do
+    if [ -x "$p" ]; then BIN="$p"; break; fi
+  done
+fi
+# RHEL/CentOS PGDG packaged locations: /usr/pgsql-*/bin/pg_dumpall
+if [ -z "$BIN" ]; then
+  for p in /usr/pgsql-*/bin/pg_dumpall; do
+    if [ -x "$p" ]; then BIN="$p"; break; fi
+  done
+fi
 if [ -z "$BIN" ]; then echo "__ERR__NO_PG_DUMPALL__" 1>&2; exit 127; fi
 CMD="$BIN -h 127.0.0.1 -U "$USER" --clean --if-exists --no-owner --no-privileges"
 if [ "''' + ("1" if compress else "0") + r'''" = "1" ]; then
