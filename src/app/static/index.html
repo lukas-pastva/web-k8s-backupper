@@ -19,30 +19,58 @@
     <main>
       <section>
         <h2>🗺️ Namespaces</h2>
+        <div style="margin: 8px 0 14px; display:flex; gap:8px; align-items:center;">
+          <label for="ns-filter" class="hint" style="min-width:max(80px,12ch)">Filter:</label>
+          <input id="ns-filter" type="search" placeholder="Type to filter namespaces…" style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text)" autocomplete="off" />
+        </div>
         <div id="ns-list" class="cards"></div>
       </section>
     </main>
     <script>
+      let ALL_NAMESPACES = [];
+      const nsListEl = document.getElementById('ns-list');
+      const filterEl = document.getElementById('ns-filter');
+
+      function renderNamespaces(list) {
+        if (!Array.isArray(list) || list.length === 0) {
+          nsListEl.innerHTML = '<div class="hint">No namespaces match your filter.</div>';
+          return;
+        }
+        nsListEl.innerHTML = list.map(ns => `
+          <a class="card" href="/namespace?ns=${encodeURIComponent(ns)}">
+            <div class="title">🗂️ ${ns}</div>
+            <div class="desc">Open namespace details</div>
+          </a>
+        `).join('');
+      }
+
+      function applyFilter() {
+        const q = (filterEl.value || '').trim().toLowerCase();
+        if (!q) {
+          renderNamespaces(ALL_NAMESPACES);
+          return;
+        }
+        const filtered = ALL_NAMESPACES.filter(ns => ns.toLowerCase().includes(q));
+        renderNamespaces(filtered);
+      }
+
       async function loadNamespaces() {
-        const el = document.getElementById('ns-list');
-        el.innerHTML = '<div class="hint">Loading namespaces…</div>';
+        nsListEl.innerHTML = '<div class="hint">Loading namespaces…</div>';
         try {
           const res = await fetch('/api/namespaces');
           const data = await res.json();
           if (!Array.isArray(data) || data.length === 0) {
-            el.innerHTML = '<div class="hint">No namespaces found.</div>';
+            nsListEl.innerHTML = '<div class="hint">No namespaces found.</div>';
             return;
           }
-          el.innerHTML = data.map(ns => `
-            <a class="card" href="/namespace?ns=${encodeURIComponent(ns)}">
-              <div class="title">🗂️ ${ns}</div>
-              <div class="desc">Open namespace details</div>
-            </a>
-          `).join('');
+          ALL_NAMESPACES = [...data].sort((a,b) => a.localeCompare(b));
+          renderNamespaces(ALL_NAMESPACES);
         } catch (e) {
-          el.innerHTML = `<div class="error">Failed to load namespaces: ${e}</div>`;
+          nsListEl.innerHTML = `<div class="error">Failed to load namespaces: ${e}</div>`;
         }
       }
+
+      filterEl.addEventListener('input', applyFilter);
       loadNamespaces();
     </script>
   </body>
