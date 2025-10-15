@@ -43,6 +43,8 @@ main{padding:20px;max-width:none;width:100%;margin:0}
 .panel-title{padding:10px 12px;border-bottom:1px solid var(--border);font-weight:600}
 .panel-body{padding:10px 12px;color:var(--muted)}
 .panel-list{display:flex;flex-direction:column;gap:8px}
+/* Limit object lists so panels don't overgrow the page */
+.panel-body.panel-list{max-height:320px;overflow:auto}
 .obj-item{display:block;background:var(--code-bg);border:1px solid var(--border);padding:6px 8px;border-radius:6px;color:var(--code-text);text-decoration:none}
 .obj-item:hover{border-color:var(--accent);color:var(--text)}
 .hint{color:var(--muted)}.error{color:#ff9aa2}
