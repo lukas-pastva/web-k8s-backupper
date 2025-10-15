@@ -30,6 +30,9 @@ h1{font-size:20px;margin:0}h2{font-size:16px;margin:16px 0}
 .subtitle{color:var(--muted)}
 .back{color:var(--muted);text-decoration:none}.back:hover{color:var(--text)}
 .actions{margin-left:auto;display:flex;gap:10px;align-items:center}
+/* Header layout helpers */
+.header-left{display:flex;flex-direction:column;gap:4px}
+.header-right{margin-left:auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 /* Use full available width across pages for wider grids */
 main{padding:20px;max-width:none;width:100%;margin:0}
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
@@ -57,6 +60,9 @@ code{background:var(--code-bg);border:1px solid var(--border);padding:2px 6px;bo
 .breadcrumbs .sep{opacity:.6}
 .breadcrumbs .current{color:var(--text);font-weight:600}
 
+/* When breadcrumbs follow the page title, give them a full row */
+header > #ns-title + .breadcrumbs{flex-basis:100%}
+
 /* Modal for manifest preview */
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;padding:40px;z-index:1000}
 .modal[hidden]{display:none !important;opacity:0;visibility:hidden;pointer-events:none}
@@ -64,6 +70,8 @@ code{background:var(--code-bg);border:1px solid var(--border);padding:2px 6px;bo
 .modal .modal-header{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:10px;border-bottom:1px solid var(--border)}
 .modal .modal-header .title{font-weight:600}
 .modal .content{margin:0;padding:12px;background:var(--code-bg);color:var(--code-text);overflow:auto;white-space:pre}
+/* Allow normal wrapping text in generic content */
+.modal .content-text{white-space:normal}
 
 /* Responsive tweaks for mobile */
 @media (max-width: 720px){
@@ -71,6 +79,7 @@ code{background:var(--code-bg);border:1px solid var(--border);padding:2px 6px;bo
   main{padding:12px}
   h1{font-size:18px}
   h2{font-size:15px;margin:12px 0}
+  .header-right{margin-left:0;flex-basis:100%;justify-content:flex-start}
 }
 @media (max-width: 520px){
   /* Stack filter rows vertically */

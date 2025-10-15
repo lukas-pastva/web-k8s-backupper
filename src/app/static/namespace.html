@@ -10,11 +10,14 @@
   </head>
   <body>
     <header>
-      <nav class="breadcrumbs"><a href="/">🗺️ Namespaces</a> <span class="sep">›</span> <span id="crumb-ns" class="current"></span></nav>
-      <h1 id="ns-title"></h1>
-      <a id="view-manifests" class="button" href="#" target="_blank">📄 View Manifests</a>
-      <a id="dl-manifests" class="button" href="#">⬇️ Download Manifests</a>
-      <div class="actions">
+      <div class="header-left">
+        <h1 id="ns-title"></h1>
+        <nav class="breadcrumbs"><a href="/">🗺️ Namespaces</a> <span class="sep">›</span> <span id="crumb-ns" class="current"></span></nav>
+      </div>
+      <div class="actions header-right">
+        <a id="view-manifests" class="button" href="#" target="_blank">📄 View Manifests</a>
+        <a id="dl-manifests" class="button" href="#">⬇️ Download Manifests</a>
+        <a id="help-btn" class="button" href="#" title="How to use this page">❔ Help</a>
         <a href="#" class="button" data-role="theme-toggle">🌓 Theme</a>
       </div>
     </header>
@@ -173,11 +176,54 @@
       }
       function hideModal(){ modal.hidden = true; }
 
+      // Help modal
+      function createHelpModal(){
+        const m = document.createElement('div');
+        m.id = 'help-modal';
+        m.className = 'modal';
+        m.setAttribute('role','dialog');
+        m.setAttribute('aria-modal','true');
+        m.hidden = true;
+        m.innerHTML = `
+          <div class="box">
+            <div class="modal-header">
+              <div class="title">❔ Help</div>
+              <div class="toolbar">
+                <button class="button sm" id="close-help" title="Close">✖ Close</button>
+              </div>
+            </div>
+            <div class="content content-text">
+              <p>Tips for using the Namespace page:</p>
+              <ul>
+                <li>Use the <strong>Filter</strong> box to search objects across kinds.</li>
+                <li>Click an object to preview its manifest in a popup.</li>
+                <li>Secrets show decoded data when previewed here.</li>
+                <li>Use <strong>View/Download Manifests</strong> for a full namespace export.</li>
+                <li>PVCs section lets you ZIP or browse volumes.</li>
+                <li>Press <kbd>Esc</kbd> to close popups. Toggle theme from the header.</li>
+              </ul>
+            </div>
+          </div>`;
+        document.body.appendChild(m);
+        m.addEventListener('click', (e) => { if(e.target === m) hideHelp(); });
+        m.querySelector('#close-help').addEventListener('click', hideHelp);
+        return m;
+      }
+      const helpModal = createHelpModal();
+      function showHelp(){ helpModal.hidden = false; }
+      function hideHelp(){ helpModal.hidden = true; }
+
       // Close modal on Escape key
       document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && !modal.hidden) {
-          hideModal();
+        if (e.key === 'Escape') {
+          if (!helpModal.hidden) { hideHelp(); return; }
+          if (!modal.hidden) { hideModal(); }
         }
+      });
+
+      // Help button
+      document.getElementById('help-btn')?.addEventListener('click', (e) => {
+        e.preventDefault(); showHelp();
       });
 
       // Open object manifest in a popup instead of new tab
