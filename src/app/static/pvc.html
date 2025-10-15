@@ -19,10 +19,13 @@
   </head>
   <body>
     <header>
-      <nav class="breadcrumbs"><a href="/">🗺️ Namespaces</a> <span class="sep">›</span> <a id="crumb-ns" href="#">🧭 </a> <span class="sep">›</span> <span id="crumb-pvc" class="current">💾 </span></nav>
-      <h1 id="title">PVC Browser</h1>
-      <a id="refresh" href="#" class="button">🔄 Refresh</a>
-      <div class="actions">
+      <div class="header-left">
+        <h1 id="title">PVC Browser</h1>
+        <nav class="breadcrumbs"><a href="/">🗺️ Namespaces</a> <span class="sep">›</span> <a id="crumb-ns" href="#">🧭 </a> <span class="sep">›</span> <span id="crumb-pvc" class="current">💾 </span></nav>
+      </div>
+      <div class="actions header-right">
+        <a id="refresh" href="#" class="button" title="Refresh">🔄 Refresh</a>
+        <a id="help-btn" href="#" class="button" title="How to use" aria-label="Help">ℹ️</a>
         <a href="#" class="button" data-role="theme-toggle" title="Theme">🌓 Theme</a>
       </div>
     </header>
@@ -181,6 +184,43 @@
 
       init();
       loadDbInfo();
+
+      // Help modal
+      function createHelpModal(){
+        const m = document.createElement('div');
+        m.id = 'help-modal';
+        m.className = 'modal';
+        m.setAttribute('role','dialog');
+        m.setAttribute('aria-modal','true');
+        m.hidden = true;
+        m.innerHTML = `
+          <div class="box">
+            <div class="modal-header">
+              <div class="title">ℹ️ Help</div>
+              <div class="toolbar">
+                <button class="button sm" id="close-help" title="Close">✖ Close</button>
+              </div>
+            </div>
+            <div class="content content-text">
+              <ul>
+                <li>Click folders to expand and load contents on demand.</li>
+                <li>Use <strong>ZIP</strong> on any folder to download a compressed archive.</li>
+                <li>Use <strong>Preview</strong> to open files supported by the server.</li>
+                <li>Use the header <strong>Refresh</strong> to reload the root listing.</li>
+                <li>If a database is detected, a <strong>DB Dump</strong> button appears near Refresh.</li>
+              </ul>
+            </div>
+          </div>`;
+        document.body.appendChild(m);
+        m.addEventListener('click', (e) => { if(e.target === m) hideHelp(); });
+        m.querySelector('#close-help').addEventListener('click', hideHelp);
+        return m;
+      }
+      const helpModal = createHelpModal();
+      function showHelp(){ helpModal.hidden = false; }
+      function hideHelp(){ helpModal.hidden = true; }
+      document.getElementById('help-btn')?.addEventListener('click', (e) => { e.preventDefault(); showHelp(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !helpModal.hidden) hideHelp(); });
     </script>
   </body>
   </html>

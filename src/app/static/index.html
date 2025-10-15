@@ -10,9 +10,11 @@
   </head>
   <body>
     <header>
-      <h1>🧰 web-k8s-backupper</h1>
-      <p class="subtitle">🗺️ Namespaces · 📄 Manifests · 💾 PVCs · 🗄️ DB dumps</p>
-      <div class="actions">
+      <div class="header-left">
+        <h1>🧰 web-k8s-backupper</h1>
+      </div>
+      <div class="actions header-right">
+        <a id="help-btn" class="button" href="#" title="Help" aria-label="Help">ℹ️</a>
         <a href="#" class="button" data-role="theme-toggle">🌓 Theme</a>
       </div>
     </header>
@@ -72,6 +74,42 @@
 
       filterEl.addEventListener('input', applyFilter);
       loadNamespaces();
+
+      // Help modal
+      function createHelpModal(){
+        const m = document.createElement('div');
+        m.id = 'help-modal';
+        m.className = 'modal';
+        m.setAttribute('role','dialog');
+        m.setAttribute('aria-modal','true');
+        m.hidden = true;
+        m.innerHTML = `
+          <div class="box">
+            <div class="modal-header">
+              <div class="title">ℹ️ Help</div>
+              <div class="toolbar">
+                <button class="button sm" id="close-help" title="Close">✖ Close</button>
+              </div>
+            </div>
+            <div class="content content-text">
+              <p>Welcome to web-k8s-backupper.</p>
+              <ul>
+                <li>Use the <strong>Filter</strong> to quickly find a namespace.</li>
+                <li>Click a namespace to see its objects, PVCs, and tools.</li>
+                <li>Toggle light/dark theme from the header.</li>
+              </ul>
+            </div>
+          </div>`;
+        document.body.appendChild(m);
+        m.addEventListener('click', (e) => { if(e.target === m) hideHelp(); });
+        m.querySelector('#close-help').addEventListener('click', hideHelp);
+        return m;
+      }
+      const helpModal = createHelpModal();
+      function showHelp(){ helpModal.hidden = false; }
+      function hideHelp(){ helpModal.hidden = true; }
+      document.getElementById('help-btn')?.addEventListener('click', (e) => { e.preventDefault(); showHelp(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !helpModal.hidden) hideHelp(); });
     </script>
   </body>
   </html>
