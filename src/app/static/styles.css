@@ -36,6 +36,7 @@ h1{font-size:20px;margin:0}h2{font-size:16px;margin:16px 0}
 /* Use full available width across pages for wider grids */
 main{padding:20px;max-width:none;width:100%;margin:0}
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.cards#pvcs,#pvcs.cards,#pvcs{grid-template-columns:repeat(auto-fill,minmax(380px,1fr))}
 .card{background:var(--panel);border:1px solid var(--border);padding:14px;border-radius:10px;text-decoration:none;color:var(--text);display:flex;flex-direction:column;gap:6px}
 .card .title{font-weight:600}.card .desc{color:var(--muted);font-size:12px}
 /* Ensure PVC cards are comfortably tall */
@@ -89,6 +90,7 @@ header > #ns-title + .breadcrumbs{flex-basis:100%}
   .filter-row label{min-width:0}
   /* Make grids single-column to avoid sideways scroll */
   .cards{grid-template-columns:1fr}
+  #pvcs{grid-template-columns:1fr}
   .grid{grid-template-columns:1fr}
   .obj-item{padding:10px 12px}
   /* Let object lists use viewport height for better use of space */
