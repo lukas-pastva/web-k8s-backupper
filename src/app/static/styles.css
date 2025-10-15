@@ -31,8 +31,10 @@ h1{font-size:20px;margin:0}h2{font-size:16px;margin:16px 0}
 .back{color:var(--muted);text-decoration:none}.back:hover{color:var(--text)}
 .actions{margin-left:auto;display:flex;gap:10px;align-items:center}
 /* Header layout helpers */
-.header-left{display:flex;flex-direction:column;gap:4px}
+.header-left{display:flex;flex-direction:column;gap:4px;flex:1 1 auto;min-width:260px}
+.header-left .breadcrumbs{margin-top:2px}
 .header-right{margin-left:auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.header-right .button{white-space:nowrap}
 /* Use full available width across pages for wider grids */
 main{padding:20px;max-width:none;width:100%;margin:0}
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
