@@ -25,6 +25,10 @@
       </section>
       <section>
         <h2>🗂️ Objects</h2>
+        <div class="filter-row" style="margin: 8px 0 14px; display:flex; gap:8px; align-items:center;">
+          <label for="obj-filter" class="hint" style="min-width:max(80px,12ch)">Filter:</label>
+          <input id="obj-filter" type="search" placeholder="Type to filter objects…" style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text)" autocomplete="off" />
+        </div>
         <div id="objects" class="grid"></div>
       </section>
     </main>
@@ -91,27 +95,44 @@
         }
       }
 
-      async function loadObjects() {
-        const el = document.getElementById('objects');
-        el.innerHTML = '<div class="hint">Loading objects…</div>';
-        try {
-          const res = await fetch(`/api/namespaces/${encodeURIComponent(ns)}/objects`);
-          const data = await res.json();
-          const kinds = Object.keys(data).sort();
-          if (kinds.length === 0) {
-            el.innerHTML = '<div class="hint">No objects found.</div>';
-            return;
-          }
-          el.innerHTML = kinds.map(k => `
+      const objectsEl = document.getElementById('objects');
+      const objFilterEl = document.getElementById('obj-filter');
+      let ALL_OBJECTS = {};
+
+      function renderObjects(){
+        const q = (objFilterEl?.value || '').trim().toLowerCase();
+        const kinds = Object.keys(ALL_OBJECTS || {}).sort();
+        const total = kinds.reduce((acc,k)=>acc + ((ALL_OBJECTS[k]||[]).length), 0);
+        const panels = [];
+        for(const k of kinds){
+          const names = (ALL_OBJECTS[k]||[]);
+          const filtered = q ? names.filter(n => n.toLowerCase().includes(q)) : names;
+          if(filtered.length === 0) continue; // skip empty kinds entirely
+          panels.push(`
             <div class="panel">
               <div class="panel-title">${iconForKind(k)} ${k}</div>
-              <div class="panel-body panel-list">${(data[k]||[]).map(n => `
+              <div class="panel-body panel-list">${filtered.map(n => `
                 <a class="obj-item" href="#" data-kind="${k}" data-name="${n}">${iconForKind(k)} ${n}</a>
               `).join('')}</div>
             </div>
-          `).join('');
+          `);
+        }
+        if(panels.length === 0){
+          objectsEl.innerHTML = q && total > 0 ? '<div class="hint">No objects match your filter.</div>' : '<div class="hint">No objects found.</div>';
+        } else {
+          objectsEl.innerHTML = panels.join('');
+        }
+      }
+
+      async function loadObjects() {
+        objectsEl.innerHTML = '<div class="hint">Loading objects…</div>';
+        try {
+          const res = await fetch(`/api/namespaces/${encodeURIComponent(ns)}/objects`);
+          const data = await res.json();
+          ALL_OBJECTS = data || {};
+          renderObjects();
         } catch (e) {
-          el.innerHTML = `<div class="error">Failed to load objects: ${e}</div>`;
+          objectsEl.innerHTML = `<div class="error">Failed to load objects: ${e}</div>`;
         }
       }
 
@@ -182,6 +203,7 @@
 
       loadPVCs();
       loadObjects();
+      if (objFilterEl) objFilterEl.addEventListener('input', renderObjects);
     </script>
   </body>
   </html>

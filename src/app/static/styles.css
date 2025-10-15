@@ -44,7 +44,7 @@ main{padding:20px;max-width:none;width:100%;margin:0}
 .panel-body{padding:10px 12px;color:var(--muted)}
 .panel-list{display:flex;flex-direction:column;gap:8px}
 /* Limit object lists so panels don't overgrow the page */
-.panel-body.panel-list{max-height:320px;overflow:auto}
+.panel-body.panel-list{max-height:320px;overflow:auto;-webkit-overflow-scrolling:touch}
 .obj-item{display:block;background:var(--code-bg);border:1px solid var(--border);padding:6px 8px;border-radius:6px;color:var(--code-text);text-decoration:none}
 .obj-item:hover{border-color:var(--accent);color:var(--text)}
 .hint{color:var(--muted)}.error{color:#ff9aa2}
@@ -64,3 +64,25 @@ code{background:var(--code-bg);border:1px solid var(--border);padding:2px 6px;bo
 .modal .modal-header{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:10px;border-bottom:1px solid var(--border)}
 .modal .modal-header .title{font-weight:600}
 .modal .content{margin:0;padding:12px;background:var(--code-bg);color:var(--code-text);overflow:auto;white-space:pre}
+
+/* Responsive tweaks for mobile */
+@media (max-width: 720px){
+  header{padding:12px}
+  main{padding:12px}
+  h1{font-size:18px}
+  h2{font-size:15px;margin:12px 0}
+}
+@media (max-width: 520px){
+  /* Stack filter rows vertically */
+  .filter-row{flex-direction:column;align-items:stretch}
+  .filter-row label{min-width:0}
+  /* Make grids single-column to avoid sideways scroll */
+  .cards{grid-template-columns:1fr}
+  .grid{grid-template-columns:1fr}
+  .obj-item{padding:10px 12px}
+  /* Let object lists use viewport height for better use of space */
+  .panel-body.panel-list{max-height:40vh}
+  /* Modal fits tighter on phones */
+  .modal{padding:12px}
+  .modal .box{max-height:85vh}
+}
