@@ -28,9 +28,9 @@
       </section>
       <section>
         <h2>🗂️ Objects</h2>
-        <div class="filter-row" style="margin: 8px 0 14px; display:flex; gap:8px; align-items:center;">
-          <label for="obj-filter" class="hint" style="min-width:max(80px,12ch)">Filter:</label>
-          <input id="obj-filter" type="search" placeholder="Type to filter objects…" style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text)" autocomplete="off" />
+        <div class="filter-row">
+          <label for="obj-filter">Filter:</label>
+          <input id="obj-filter" type="search" placeholder="Type to filter objects…" autocomplete="off" />
         </div>
         <div id="objects" class="grid"></div>
       </section>
@@ -77,7 +77,7 @@
 
       async function loadPVCs() {
         const el = document.getElementById('pvcs');
-        el.innerHTML = '<div class="hint">Loading PVCs…</div>';
+        el.innerHTML = '<div class="hint loading">Loading PVCs…</div>';
         try {
           const res = await fetch(`/api/namespaces/${encodeURIComponent(ns)}/pvcs`);
           const data = await res.json();
@@ -128,7 +128,7 @@
       }
 
       async function loadObjects() {
-        objectsEl.innerHTML = '<div class="hint">Loading objects…</div>';
+        objectsEl.innerHTML = '<div class="hint loading">Loading objects…</div>';
         try {
           const res = await fetch(`/api/namespaces/${encodeURIComponent(ns)}/objects`);
           const data = await res.json();

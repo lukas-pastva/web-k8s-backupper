@@ -7,15 +7,6 @@
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/static/styles.css" />
     <script src="/static/theme.js" defer></script>
-    <style>
-      .tree{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px}
-      .tree ul{list-style:none;margin:0;padding-left:18px}
-      .tree .node{display:flex;align-items:center;gap:8px;line-height:1.4}
-      .tree .node .icon{width:1.2em;text-align:center}
-      .tree summary{cursor:pointer}
-      .meta{color:var(--muted);font-size:12px}
-      .toolbar{display:flex;gap:8px;align-items:center;margin-left:auto}
-    </style>
   </head>
   <body>
     <header>
@@ -32,7 +23,7 @@
     <main>
       <section>
         <div id="info" class="meta"></div>
-        <div id="tree" class="tree"><div class="hint">Loading…</div></div>
+        <div id="tree" class="tree"><div class="hint loading">Loading…</div></div>
       </section>
     </main>
     <script>
@@ -76,7 +67,7 @@
               <span style="margin-left:auto"></span>
               <a class="button sm" href="${zipHref(path)}" onclick="event.stopPropagation()">🗜️ ZIP</a>
             </summary>
-            <ul><li class="node meta">Loading…</li></ul>
+            <ul><li class="node meta loading">Loading…</li></ul>
           </details>
         `;
       }

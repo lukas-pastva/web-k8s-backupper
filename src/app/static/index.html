@@ -22,9 +22,9 @@
     <main>
       <section>
         <h2>🗺️ Namespaces</h2>
-        <div class="filter-row" style="margin: 8px 0 14px; display:flex; gap:8px; align-items:center;">
-          <label for="ns-filter" class="hint" style="min-width:max(80px,12ch)">Filter:</label>
-          <input id="ns-filter" type="search" placeholder="Type to filter namespaces…" style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text)" autocomplete="off" />
+        <div class="filter-row">
+          <label for="ns-filter">Filter:</label>
+          <input id="ns-filter" type="search" placeholder="Type to filter namespaces…" autocomplete="off" />
         </div>
         <div id="ns-list" class="cards"></div>
       </section>
@@ -58,7 +58,7 @@
       }
 
       async function loadNamespaces() {
-        nsListEl.innerHTML = '<div class="hint">Loading namespaces…</div>';
+        nsListEl.innerHTML = '<div class="hint loading">Loading namespaces…</div>';
         try {
           const res = await fetch('/api/namespaces');
           const data = await res.json();
